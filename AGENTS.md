@@ -55,6 +55,27 @@ desktop/   Windows（Compose Desktop + Winsock AF_BTH）
 - ペアリング鍵・認証情報を扱わない
 - 設定とキャッシュは端末内にのみ保存する
 
+## 実機を使うとき
+
+Device Warden でリースを取得してから操作する。詳細は
+[docs/DEVICE_WARDEN.md](docs/DEVICE_WARDEN.md) を参照。
+
+**最重要: リースは 120 秒で失効する。** claim したまま heartbeat を送らないと
+「要確認」に移行し、他のエージェントがその端末を使えなくなる。
+このプロジェクトでは実際に3回発生した。
+
+```powershell
+# 1コマンドで終わる作業（推奨）: 確保→実行→解放を自動で行う
+python -m device_warden.cli with-device --tool dsh --session-id <id> -- shell getprop ro.product.model
+
+# 長時間の作業: heartbeat を自動で送るヘルパーを使う
+$lease = .\scripts\device-lease.ps1 -Action claim -Title "APK 導入"
+python -m device_warden.cli adb $lease -- install -r app-debug.apk
+.\scripts\device-lease.ps1 -Action release -LeaseId $lease
+```
+
+作業が終わったら必ず解放する。セッション終了時の自動解放は無い。
+
 ## ブランチ運用
 
 - `main` を唯一の長期ブランチとする
