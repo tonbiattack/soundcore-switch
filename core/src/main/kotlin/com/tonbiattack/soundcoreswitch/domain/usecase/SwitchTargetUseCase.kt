@@ -42,7 +42,12 @@ class SwitchTargetUseCase(
             is BluetoothAvailability.Unknown ->
                 return SwitchResult.Failed(FailureReason.Unknown)
         }
-        if (device.connection != ConnectionStatus.CONNECTED) {
+        // 接続状態が「切断中」と確定している場合だけ止める。
+        // 「不明」は取得できなかっただけで、切断とは限らない（仕様書 F-02）。
+        // 端末によってはプロファイル API が使えず常に不明になるため、
+        // 不明を理由に操作を塞ぐと、実際には接続中でも何もできなくなる。
+        // 到達できない場合はアダプタ側の通信が失敗し、具体的な理由で返る。
+        if (device.connection == ConnectionStatus.DISCONNECTED) {
             return SwitchResult.Failed(FailureReason.EarbudsNotConnected)
         }
 
