@@ -1,0 +1,37 @@
+package com.tonbiattack.soundcoreswitch.domain.model
+
+/**
+ * 失敗理由。仕様書 F-05「Bluetoothオフ、権限不足、イヤホン未接続、タイムアウト、非対応を区別して通知する」
+ * に対応する。UI はこの型で文言と対処方法を出し分ける。
+ *
+ * 例外メッセージをそのまま画面に出さない。端末識別子や内部情報が混ざる恐れがあるため、
+ * 表示文言は [FailureReason] から組み立てる。
+ */
+sealed interface FailureReason {
+    /** Bluetooth がオフ。 */
+    data object BluetoothOff : FailureReason
+
+    /** Bluetooth の権限がない、または取り消された。 */
+    data object PermissionDenied : FailureReason
+
+    /** 対象のイヤホンが見つからない、または接続されていない。 */
+    data object EarbudsNotConnected : FailureReason
+
+    /** この機種では操作が未対応。 */
+    data object UnsupportedModel : FailureReason
+
+    /** 応答が時間内に返らなかった。 */
+    data object Timeout : FailureReason
+
+    /** 接続先の一覧を取得できなかった。 */
+    data object TargetListUnavailable : FailureReason
+
+    /** 切り替え要求は送れたが、結果を確認できなかった。成功として扱ってはならない。 */
+    data object SwitchUnconfirmed : FailureReason
+
+    /** 指定した接続先がイヤホン側に存在しない。 */
+    data object TargetNotFound : FailureReason
+
+    /** 上記以外。詳細はログに残さず、汎用文言を出す。 */
+    data object Unknown : FailureReason
+}
