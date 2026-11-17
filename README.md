@@ -212,6 +212,7 @@ desktop/                       # Windows
 | `scripts/gradle.ps1` | PATH の括弧問題を回避して Gradle を実行する |
 | `scripts/probe-soundcore.ps1` | プロトコルを直接叩いて接続先一覧と実状態を並べて確認する |
 | `scripts/generate-icon.ps1` | アプリアイコン（Android の PNG / Windows の ICO）を生成する |
+| `scripts/device-lease.ps1` | Device Warden のリースを取得し、heartbeat を自動で送る |
 
 ## ライセンス
 

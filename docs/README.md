@@ -27,6 +27,7 @@ Soundcore Switch の設計・調査・検証の記録。
 | [VERIFICATION_ANDROID.md](./VERIFICATION_ANDROID.md) | Android 実機での検証記録と、そこで直した不具合 | Android 実機で検証したとき |
 | [VERIFICATION_A40.md](./VERIFICATION_A40.md) | Space A40 固有の知見（応答と実効果の食い違い等） | A40 で検証したとき |
 | [MEASUREMENT.md](./MEASUREMENT.md) | 計測値・異常系テスト・ログの安全性 | 計測したとき |
+| [DEVICE_WARDEN.md](./DEVICE_WARDEN.md) | 実機のリース運用（heartbeat の落とし穴） | 実機運用を変えるとき |
 
 ## コードとの対応
 
