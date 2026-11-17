@@ -111,6 +111,13 @@ fun AppScreen(
                 onRefresh = onRefresh,
             )
 
+            // 切り替え結果は一覧より上に出す。一覧の下に置くと、LazyColumn が
+            // 高さを占有して画面外に押し出され、結果が見えなくなる。
+            SwitchResultBar(
+                switch = state.switch,
+                onDismiss = onDismissSwitchResult,
+            )
+
             Spacer(Modifier.height(16.dp))
             HorizontalDivider()
             Spacer(Modifier.height(12.dp))
@@ -125,11 +132,6 @@ fun AppScreen(
                 state = state,
                 onSwitch = onSwitch,
                 onRefresh = onRefresh,
-            )
-
-            SwitchResultBar(
-                switch = state.switch,
-                onDismiss = onDismissSwitchResult,
             )
         }
     }
@@ -551,13 +553,13 @@ private fun disabledReason(canSwitch: Boolean, device: EarbudsDevice?): String? 
     if (canSwitch) return null
     if (device == null) return "イヤホンを選択してください。"
     return when (device.supportLevel) {
-        SupportLevel.SUPPORTED -> "イヤホンが接続されていないため、切り替えできません。"
+        SupportLevel.SUPPORTED ->
+            "イヤホンが接続されていないため、切り替えできません。"
         SupportLevel.PARTIAL -> "この機種は接続状態の表示のみ対応しています。"
         SupportLevel.UNSUPPORTED -> "この機種は対応していません。"
         SupportLevel.UNKNOWN -> "この機種は実機での動作確認が完了していないため、切り替えできません。"
     }
 }
-
 /** 接続状態の表示文言。不明を切断中と書かない。 */
 private fun ConnectionStatus.label(): String = when (this) {
     ConnectionStatus.CONNECTED -> "接続中"

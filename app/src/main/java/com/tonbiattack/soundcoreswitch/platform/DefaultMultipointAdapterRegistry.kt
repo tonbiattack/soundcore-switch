@@ -1,6 +1,9 @@
 package com.tonbiattack.soundcoreswitch.platform
 
+import android.annotation.SuppressLint
+import android.bluetooth.BluetoothManager
 import android.content.Context
+import android.util.Log
 import com.tonbiattack.soundcoreswitch.adapter.SoundcoreMultipointAdapter
 import com.tonbiattack.soundcoreswitch.domain.adapter.MultipointAdapter
 import com.tonbiattack.soundcoreswitch.domain.adapter.MultipointAdapterRegistry
@@ -55,8 +58,25 @@ class DefaultMultipointAdapterRegistry(
             val transport = AndroidSoundcoreTransport(context)
             return mapOf(
                 // Liberty 4 NC (A3947)。MODEL_ID は "liberty-4-nc"。
-                SoundcoreMultipointAdapter.MODEL_ID to SoundcoreMultipointAdapter(transport),
+                SoundcoreMultipointAdapter.MODEL_ID to SoundcoreMultipointAdapter(
+                    transport = transport,
+                    // 接続上限に達したとき、この端末自身を切断しないために名前を渡す。
+                    localNameProvider = { localBluetoothName(context) },
+                    logger = { Log.d("SoundcoreAdapter", it) },
+                ),
             )
         }
+
+        /**
+         * この端末の Bluetooth 名。
+         *
+         * 接続先一覧の表示名と照合して「操作元の端末」を特定するために使う。
+         * 権限が無いなどで取得できなければ null（呼び出し側は別の手掛かりに落ちる）。
+         */
+        @SuppressLint("MissingPermission")
+        fun localBluetoothName(context: Context): String? = runCatching {
+            val manager = context.getSystemService(Context.BLUETOOTH_SERVICE) as? BluetoothManager
+            manager?.adapter?.name?.takeIf { it.isNotBlank() }
+        }.getOrNull()
     }
 }

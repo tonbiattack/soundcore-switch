@@ -31,14 +31,18 @@ data class AppUiState(
      * 切り替え操作を受け付けてよいか。
      *
      * 送信中は二重送信を防ぐため false。加えて、機種が対応済みで、
-     * Bluetooth が使え、イヤホン自体が接続中であることを要求する。
-     * イヤホンが繋がっていなければ切り替え要求は必ず失敗するため、
-     * 押せるのに必ず失敗するボタンにしない。
+     * Bluetooth が使えることを要求する。
+     *
+     * イヤホンの接続状態は「切断中と確定している」場合だけ止める。
+     * 「不明」は取得できなかっただけで切断とは限らないため、操作は許可する
+     * （仕様書 F-02「取得不可は不明」）。端末によってはプロファイル API が
+     * 使えず常に不明になるので、不明を理由に塞ぐと何もできなくなる。
+     * 到達できない場合は通信が失敗し、具体的な理由で利用者に伝わる。
      */
     val canSwitch: Boolean
         get() = switch !is SwitchUiState.InFlight &&
             selectedDevice?.supportLevel?.allowsSwitching == true &&
-            selectedDevice?.connection == ConnectionStatus.CONNECTED &&
+            selectedDevice?.connection != ConnectionStatus.DISCONNECTED &&
             bluetooth == BluetoothAvailability.Ready
 
     /** 接続先一覧を表示できる状態か。 */
