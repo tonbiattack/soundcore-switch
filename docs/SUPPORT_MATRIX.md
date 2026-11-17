@@ -27,7 +27,7 @@
 | 機種 | 型番 | 一覧取得 | 切り替え | 完了検出 | 総合 | 備考 |
 |---|---|---|---|---|---|---|
 | soundcore Liberty 4 NC | A3947 | ✅ 実機確認 | ✅ 実機確認 | ✅ 実機確認 | **supported** | Windows / Android 両方で検証 |
-| Soundcore Space A40 | A3936 | ✅ 実機確認 | ✅ 実機確認 | ✅ 実機確認 | **supported** | Windows で検証。切断は対象により拒否される場合あり |
+| Soundcore Space A40 | A3936 | ✅ 実機確認 | ✅ 実機確認 | ✅ 実機確認 | **supported** | Windows / Android 両方で検証 |
 | 上記以外の Soundcore | — | — | — | — | **unknown** | 未登録機種は自動的に unknown |
 
 ### Liberty 4 NC の検証内容（2026-11-17）

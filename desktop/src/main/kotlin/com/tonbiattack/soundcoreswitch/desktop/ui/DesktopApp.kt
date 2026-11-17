@@ -21,7 +21,6 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.FilterChip
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
@@ -34,6 +33,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableLongStateOf
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -112,6 +112,13 @@ fun DesktopApp(container: DesktopContainer, scope: CoroutineScope) {
                     onRefresh = viewModel::refresh,
                 )
 
+                // 切り替え結果は一覧より上に出す。一覧の下に置くと、
+                // 接続先が多いときに画面外へ押し出されて結果が見えなくなる。
+                SwitchResultBar(
+                    switch = state.switch,
+                    onDismiss = viewModel::dismissSwitchResult,
+                )
+
                 Spacer(Modifier.height(16.dp))
                 HorizontalDivider()
                 Spacer(Modifier.height(12.dp))
@@ -126,11 +133,6 @@ fun DesktopApp(container: DesktopContainer, scope: CoroutineScope) {
                     state = state,
                     onSwitch = viewModel::switchTo,
                     onRefresh = viewModel::refresh,
-                )
-
-                SwitchResultBar(
-                    switch = state.switch,
-                    onDismiss = viewModel::dismissSwitchResult,
                 )
 
                 Spacer(Modifier.height(16.dp))
@@ -180,7 +182,16 @@ private fun BluetoothBanner(availability: BluetoothAvailability) {
     Spacer(Modifier.height(12.dp))
 }
 
-/** イヤホンの選択行。 */
+/**
+ * イヤホンの選択行。
+ *
+ * 横並びのチップにすると、名前が長い機種で見切れる（Android 版で確認）。
+ * 同名の機種を複数ペアリングしている場合も区別しづらいため、
+ * 1台1行の縦並びにして名前を省略しない。
+ *
+ * ただし台数が多いと接続先の一覧が押し下げられるため、
+ * 選択中の1台だけ常に表示し、残りは折りたたむ。
+ */
 @Composable
 private fun DeviceSelector(
     devices: List<EarbudsDevice>,
@@ -200,40 +211,101 @@ private fun DeviceSelector(
         return
     }
 
-    Row(
+    // 選択中の機種を先頭に出す。未選択なら先頭の機種を代表として出す。
+    val current = selected ?: devices.first()
+    val others = devices.filter { it.address != current.address }
+    var expanded by remember { mutableStateOf(false) }
+
+    Column(
         modifier = Modifier.fillMaxWidth(),
-        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {
-        devices.forEach { device ->
-            FilterChip(
-                selected = device.address == selected?.address,
-                onClick = { onSelect(device) },
-                // タップ領域を 48dp 以上にする。
-                modifier = Modifier.heightIn(min = 48.dp),
-                label = {
-                    Column {
-                        Text(
-                            text = device.displayName,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
-                        )
-                        val note = device.supportLevel.shortLabel()
-                        if (note != null) {
-                            Text(
-                                text = note,
-                                style = MaterialTheme.typography.labelSmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            )
-                        }
-                    }
-                },
-                leadingIcon = {
-                    StatusDot(
-                        status = device.connection,
-                        contentDescription = device.connection.label(),
-                    )
-                },
+        DeviceRow(device = current, selected = true, onSelect = onSelect)
+
+        if (others.isNotEmpty()) {
+            TextButton(
+                onClick = { expanded = !expanded },
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                Text(
+                    text = if (expanded) {
+                        "他のイヤホンを隠す"
+                    } else {
+                        "他のイヤホンを表示（${others.size}台）"
+                    },
+                )
+            }
+            if (expanded) {
+                others.forEach { device ->
+                    DeviceRow(device = device, selected = false, onSelect = onSelect)
+                }
+            }
+        }
+    }
+}
+
+/** イヤホン1台ぶんの選択行。名前は折り返して最後まで表示する。 */
+@Composable
+private fun DeviceRow(
+    device: EarbudsDevice,
+    selected: Boolean,
+    onSelect: (EarbudsDevice) -> Unit,
+) {
+    val containerColor = if (selected) {
+        MaterialTheme.colorScheme.primaryContainer
+    } else {
+        MaterialTheme.colorScheme.surfaceVariant
+    }
+
+    Surface(
+        modifier = Modifier
+            .fillMaxWidth()
+            .heightIn(min = 48.dp)
+            .semantics {
+                contentDescription = "${device.displayName} ${device.connection.label()}"
+            },
+        shape = RoundedCornerShape(12.dp),
+        color = containerColor,
+        onClick = { onSelect(device) },
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 12.dp, vertical = 12.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            StatusDot(
+                status = device.connection,
+                contentDescription = device.connection.label(),
             )
+            Spacer(Modifier.width(12.dp))
+            Column(Modifier.weight(1f)) {
+                // 名前は省略せず折り返す。長い機種名でも最後まで読めるようにする。
+                Text(
+                    text = device.displayName,
+                    style = MaterialTheme.typography.titleMedium,
+                )
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        text = device.connection.label(),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    val note = device.supportLevel.shortLabel()
+                    if (note != null) {
+                        Spacer(Modifier.width(8.dp))
+                        Badge(text = note)
+                    }
+                }
+            }
+            if (selected) {
+                Spacer(Modifier.width(8.dp))
+                Text(
+                    text = "選択中",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.primary,
+                )
+            }
         }
     }
 }

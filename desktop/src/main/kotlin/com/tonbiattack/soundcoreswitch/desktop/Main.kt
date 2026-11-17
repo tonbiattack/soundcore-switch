@@ -1,5 +1,8 @@
 package com.tonbiattack.soundcoreswitch.desktop
 
+import androidx.compose.ui.graphics.painter.BitmapPainter
+import androidx.compose.ui.graphics.painter.Painter
+import androidx.compose.ui.graphics.toComposeImageBitmap
 import androidx.compose.ui.unit.DpSize
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Window
@@ -11,6 +14,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import javax.imageio.ImageIO
 
 /**
  * Windows 版のエントリポイント。
@@ -30,7 +34,22 @@ fun main() = application {
         },
         title = "Soundcore Switch",
         state = rememberWindowState(size = DpSize(520.dp, 720.dp)),
+        // ウィンドウとタスクバーのアイコン。未指定だと Kotlin の既定アイコンになる。
+        icon = rememberAppIcon(),
     ) {
         DesktopApp(container = container, scope = scope)
     }
 }
+
+/**
+ * アプリのアイコンを読み込む。
+ *
+ * `src/main/resources/icon.ico` は `scripts/generate-icon.ps1` が生成する。
+ * 読み込めなくても起動を止めない（アイコンは本質的な機能ではない）。
+ */
+private fun rememberAppIcon(): Painter? = runCatching {
+    val image = object {}.javaClass.getResourceAsStream("/icon.ico")?.use {
+        ImageIO.read(it)
+    } ?: return null
+    BitmapPainter(image.toComposeImageBitmap())
+}.getOrNull()

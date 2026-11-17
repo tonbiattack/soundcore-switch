@@ -62,13 +62,29 @@ class DesktopContainer {
      * 実機検証が完了した機種だけを登録する。登録と
      * [com.tonbiattack.soundcoreswitch.domain.model.ModelCatalog] の対応レベルは
      * 必ず同時に更新すること（片方だけだと UI と実動作が食い違う）。
+     *
+     * トランスポートは機種に依存しない（ベンダー UUID は機種コードから組み立てる）。
+     * そのため1つのインスタンスを全機種で共有する。
      */
-    val registry: MultipointAdapterRegistry = DefaultMultipointAdapterRegistry(
-        mapOf(
-            SoundcoreMultipointAdapter.MODEL_ID to
-                SoundcoreMultipointAdapter(transport = SoundcoreRfcommTransport()),
-        ),
-    )
+    val registry: MultipointAdapterRegistry = run {
+        val transport = SoundcoreRfcommTransport()
+        // 接続上限に達したとき、この端末自身を切断しないために名前を渡す。
+        val localName = { localBluetoothName() }
+        DefaultMultipointAdapterRegistry(
+            mapOf(
+                // Liberty 4 NC (A3947)。
+                SoundcoreMultipointAdapter.MODEL_ID to SoundcoreMultipointAdapter(
+                    transport = transport,
+                    localNameProvider = localName,
+                ),
+                // Space A40 (A3936)。2026-11-17 に実機で一覧取得・切断・接続を確認。
+                SoundcoreMultipointAdapter.SPACE_A40_MODEL_ID to SoundcoreMultipointAdapter(
+                    transport = transport,
+                    localNameProvider = localName,
+                ),
+            ),
+        )
+    }
 
     val targetRepository: TargetRepository = DefaultTargetRepository(registry, targetCache)
 
@@ -97,6 +113,19 @@ class DesktopContainer {
     fun close() {
         // 現時点で解放が必要なリソースは無い。
     }
+
+    /**
+     * この PC の Bluetooth 名。
+     *
+     * 接続先一覧の表示名と照合して「操作元の端末」を特定するために使う。
+     * 接続上限に達したとき、この PC 自身を切断しないための手掛かりになる。
+     *
+     * Windows の Bluetooth 名は既定でコンピューター名と同じ。
+     * 取得できなければ null（呼び出し側は別の手掛かりに落ちる）。
+     */
+    private fun localBluetoothName(): String? = runCatching {
+        System.getenv("COMPUTERNAME")?.takeIf { it.isNotBlank() }
+    }.getOrNull()
 }
 
 /** 接続先一覧キャッシュのファイル名。設定とは分ける。 */
