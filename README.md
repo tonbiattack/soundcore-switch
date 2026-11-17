@@ -27,7 +27,7 @@ Soundcore 純正アプリを開かずに、マルチポイント接続先の状�
 | 機種 | 型番 | 状態 |
 |---|---|---|
 | soundcore Liberty 4 NC | A3947 | ✅ 実機検証済み（Windows / Android 両方） |
-| Soundcore Space A40 | A3936 | ✅ 実機検証済み（Windows） |
+| Soundcore Space A40 | A3936 | ✅ 実機検証済み（Windows / Android 両方） |
 
 詳細は [docs/SUPPORT_MATRIX.md](docs/SUPPORT_MATRIX.md) を参照。
 
@@ -211,6 +211,7 @@ desktop/                       # Windows
 |---|---|
 | `scripts/gradle.ps1` | PATH の括弧問題を回避して Gradle を実行する |
 | `scripts/probe-soundcore.ps1` | プロトコルを直接叩いて接続先一覧と実状態を並べて確認する |
+| `scripts/generate-icon.ps1` | アプリアイコン（Android の PNG / Windows の ICO）を生成する |
 
 ## ライセンス
 

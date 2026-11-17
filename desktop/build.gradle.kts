@@ -50,6 +50,10 @@ compose.desktop {
 
             windows {
                 menuGroup = "Soundcore Switch"
+                // インストーラとショートカットのアイコン。
+                // 未指定だと Kotlin の既定アイコンが使われる。
+                // 生成は scripts/generate-icon.ps1。
+                iconFile.set(project.file("src/main/resources/icon.ico"))
                 // デスクトップにショートカットを作る（仕様書 F-08 の考え方を踏襲）。
                 shortcut = true
                 dirChooser = true
