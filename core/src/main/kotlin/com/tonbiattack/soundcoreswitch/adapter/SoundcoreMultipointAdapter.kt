@@ -36,6 +36,8 @@ import kotlinx.coroutines.delay
  */
 class SoundcoreMultipointAdapter(
     private val transport: SoundcoreTransport,
+    /** このアダプタが担当する機種 ID。既定は Liberty 4 NC。 */
+    override val modelId: String = MODEL_ID,
     private val maxConnections: Int = 2,
     private val timeoutMillis: Long = 4_000,
     /**
@@ -60,8 +62,6 @@ class SoundcoreMultipointAdapter(
     /** 診断用のログ出力。既定は何もしない（`:core` は Android に依存しないため）。 */
     private val logger: (String) -> Unit = {},
 ) : MultipointAdapter {
-
-    override val modelId: String = MODEL_ID
 
     override suspend fun readTargets(device: EarbudsDevice): TargetListResult {
         val modelCode = SoundcoreUuids.modelCodeOf(device.model.id)
@@ -110,17 +110,39 @@ class SoundcoreMultipointAdapter(
             val connected = before.filter { it.connected }
             if (connected.size >= maxConnections) {
                 // この端末自身（＝操作元）は切らない。切ると通信が途切れて切り替えが成立しない。
-                val victim = selectDisconnectCandidate(connected, localName)
-                logger("切断対象=${victim.name} 操作元名=$localName 接続中=${connected.map { it.name }}")
-                sendCommand(
-                    mac = device.address,
-                    modelCode = modelCode,
-                    command = SoundcoreProtocol.Cmd.DISCONNECT_DEVICE,
-                    body = SoundcoreProtocol.parseMac(victim.mac),
-                )
-                // イヤホンが切断を処理し終えるのを待つ。待たずに接続コマンドを送ると、
-                // まだ枠が空いていないため無視される（実機で確認）。
-                delay(disconnectSettleMillis)
+                val candidates = orderDisconnectCandidates(connected, localName)
+                logger("切断候補=${candidates.map { it.name }} 操作元名=$localName")
+
+                // 切断は対象によって拒否されることがある（実機で確認）。
+                // 拒否された場合は次の候補を試す。1台も切れなければ失敗として返す。
+                var freed = false
+                for (victim in candidates) {
+                    sendCommand(
+                        mac = device.address,
+                        modelCode = modelCode,
+                        command = SoundcoreProtocol.Cmd.DISCONNECT_DEVICE,
+                        body = SoundcoreProtocol.parseMac(victim.mac),
+                    )
+                    delay(disconnectSettleMillis)
+
+                    // 実際に切断されたかを一覧の再取得で確認する。
+                    // 応答の有無では判定できない（応答なしで成功する場合がある）。
+                    val afterDisconnect = fetchDevices(device.address, modelCode)
+                    val stillConnected = afterDisconnect
+                        ?.firstOrNull { it.mac.equals(victim.mac, ignoreCase = true) }
+                        ?.connected
+                    logger("切断確認 ${victim.name}: まだ接続中=$stillConnected")
+                    if (stillConnected == false) {
+                        freed = true
+                        break
+                    }
+                }
+
+                if (!freed) {
+                    // 1台も切断できなかった。上限が空かないため接続しても無駄になる。
+                    logger("切断できた端末が無いため中止する")
+                    return SwitchResult.Failed(FailureReason.SwitchUnconfirmed)
+                }
             }
 
             sendCommand(
@@ -168,31 +190,32 @@ class SoundcoreMultipointAdapter(
     }
 
     /**
-     * 切断する端末を選ぶ。
+     * 切断を試みる順に端末を並べる。
      *
      * **操作元（この端末）を切ってはいけない。** 切ると通信が途切れ、
      * 続く接続コマンドが届かず切り替えが成立しない（実機で確認）。
      *
      * 操作元の判定は名前の照合で行う。プロトコルは「どの接続先が操作元か」を
-     * 返さないため、これが唯一の手掛かりである。名前が一致しない場合は
-     * 先頭を選ぶが、その場合でも切り替え結果は状態の再取得で確認するため、
-     * 誤って成功と表示することはない。
+     * 返さないため、これが唯一の手掛かりである。
+     *
+     * 切断は対象によって拒否されることがあるため（実機で確認）、
+     * 1台に決め打ちせず候補を順に返す。呼び出し側は先頭から試す。
      *
      * @param connected 現在接続中の端末。
      * @param localName 操作元の Bluetooth 名。取得できなければ null。
      */
-    private fun selectDisconnectCandidate(
+    private fun orderDisconnectCandidates(
         connected: List<RawDevice>,
         localName: String?,
-    ): RawDevice {
+    ): List<RawDevice> {
         if (localName != null) {
             val normalized = localName.trim().lowercase()
             val notLocal = connected.filter { it.name.trim().lowercase() != normalized }
-            // 操作元以外が残っていれば、その中から選ぶ。
-            if (notLocal.isNotEmpty()) return notLocal.first()
+            // 操作元以外が残っていれば、その中だけを候補にする。
+            if (notLocal.isNotEmpty()) return notLocal
         }
-        // 名前で判別できない場合は、名前から PC らしいものを優先して切る。
-        return connected.firstOrNull { !it.isLikelyThisDevice() } ?: connected.first()
+        // 名前で判別できない場合は、名前から PC らしいものを先に試す。
+        return connected.sortedBy { if (it.isLikelyThisDevice()) 1 else 0 }
     }
 
     /** 操作元（この端末）の Bluetooth 名。 */
@@ -256,8 +279,11 @@ class SoundcoreMultipointAdapter(
     }
 
     companion object {
-        /** このアダプタが担当する機種 ID。 */
+        /** Liberty 4 NC (A3947) の機種 ID。 */
         const val MODEL_ID = "liberty-4-nc"
+
+        /** Space A40 (A3936) の機種 ID。 */
+        const val SPACE_A40_MODEL_ID = "space-a40"
 
         /**
          * 接続後に状態を確認する回数。

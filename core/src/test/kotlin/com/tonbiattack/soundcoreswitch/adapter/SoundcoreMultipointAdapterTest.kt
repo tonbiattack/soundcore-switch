@@ -32,10 +32,16 @@ class SoundcoreMultipointAdapterTest {
      * スクリプト化したトランスポート。
      *
      * 送信されたパケットを記録し、コマンドに応じた応答を返す。
+     *
+     * @param disconnectWorks 切断コマンドで実際に状態が変わるか。
+     *   実機では対象によって拒否されることがあるため、両方を再現できるようにする。
+     * @param connectWorks 接続コマンドで実際に状態が変わるか。
      */
     private class ScriptedTransport(
         var devices: List<Triple<String, String, Boolean>> = emptyList(),
         var failWith: Exception? = null,
+        private val disconnectWorks: Boolean = false,
+        private val connectWorks: Boolean = false,
     ) : SoundcoreTransport {
         val sentCommands = mutableListOf<Int>()
         val sentBodies = mutableListOf<ByteArray>()
@@ -51,13 +57,37 @@ class SoundcoreMultipointAdapterTest {
 
             val command = ((packet[5].toInt() and 0xFF) shl 8) or (packet[6].toInt() and 0xFF)
             sentCommands += command
-            sentBodies += packet.copyOfRange(9, packet.size - 1)
+            val body = packet.copyOfRange(9, packet.size - 1)
+            sentBodies += body
+
+            // 切断・接続コマンドは、実機の挙動に合わせて状態を変える。
+            when (command) {
+                commandOf(SoundcoreProtocol.Cmd.DISCONNECT_DEVICE) -> {
+                    if (disconnectWorks && body.size >= 6) {
+                        val target = SoundcoreProtocol.formatMac(body, 0)
+                        devices = devices.map { (m, n, c) ->
+                            Triple(m, n, if (m.equals(target, ignoreCase = true)) false else c)
+                        }
+                    }
+                }
+                commandOf(SoundcoreProtocol.Cmd.CONNECT_DEVICE) -> {
+                    if (connectWorks && body.size >= 6) {
+                        val target = SoundcoreProtocol.formatMac(body, 0)
+                        devices = devices.map { (m, n, c) ->
+                            Triple(m, n, if (m.equals(target, ignoreCase = true)) true else c)
+                        }
+                    }
+                }
+            }
 
             return when (command) {
                 SoundcoreProtocol.Rsp.DUAL_DEVICES -> listOf(buildDeviceListFrame(devices))
                 else -> emptyList()
             }
         }
+
+        private fun commandOf(cmd: ByteArray): Int =
+            ((cmd[0].toInt() and 0xFF) shl 8) or (cmd[1].toInt() and 0xFF)
 
         /** 接続先一覧の応答フレームを組み立てる。 */
         private fun buildDeviceListFrame(
@@ -148,12 +178,14 @@ class SoundcoreMultipointAdapterTest {
     @Test
     fun `接続上限に達しているときは先に1台切断してから接続する`() = runTest {
         // 2台接続中（上限）。3台目を繋ぐには先に1台切る必要がある。
+        // 切断コマンドを受けたら実際に切断される（実機の挙動に合わせる）。
         val transport = ScriptedTransport(
             devices = listOf(
                 Triple("F0:00:00:00:00:10", "Pixel 9", true),
                 Triple("F0:00:00:00:00:21", "DESKTOP-B", true),
                 Triple("F0:00:00:00:00:30", "Tablet A", false),
             ),
+            disconnectWorks = true,
         )
         val adapter = SoundcoreMultipointAdapter(transport, maxConnections = 2)
 
