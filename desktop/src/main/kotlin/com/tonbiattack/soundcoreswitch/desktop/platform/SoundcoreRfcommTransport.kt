@@ -251,7 +251,8 @@ class SoundcoreRfcommTransport : SoundcoreTransport {
             // 0 は相手からの正常な切断。
             if (read == 0) break
 
-            accumulator.write(chunk.getByteArray(0L, read))
+            val bytes = chunk.getByteArray(0L, read)
+            accumulator.write(bytes, 0, bytes.size)
             if (accumulator.size() > MAX_ACCUMULATED_BYTES) break
 
             // バッファは先頭から再解析する。既に取り出したぶんは件数で読み飛ばす。

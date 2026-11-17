@@ -42,7 +42,10 @@ compose.desktop {
             targetFormats(TargetFormat.Msi, TargetFormat.Exe)
             packageName = "SoundcoreSwitch"
             packageVersion = "1.0.0"
-            description = "Soundcore マルチポイント接続先の状態確認"
+            // MSI のメタデータは ASCII に限定する。
+            // jpackage / WiX はロケールによって非 ASCII を扱えず、
+            // 日本語ロケール以外の CI ランナーで失敗するため。
+            description = "Soundcore multipoint connection switcher"
             vendor = "tonbiattack"
 
             windows {
