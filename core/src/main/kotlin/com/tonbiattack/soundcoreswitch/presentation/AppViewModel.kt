@@ -1,0 +1,232 @@
+package com.tonbiattack.soundcoreswitch.presentation
+
+import com.tonbiattack.soundcoreswitch.domain.adapter.BluetoothAvailability
+import com.tonbiattack.soundcoreswitch.domain.adapter.BluetoothAvailabilityChecker
+import com.tonbiattack.soundcoreswitch.domain.adapter.EarbudsScanner
+import com.tonbiattack.soundcoreswitch.domain.adapter.ScanResult
+import com.tonbiattack.soundcoreswitch.domain.model.EarbudsDevice
+import com.tonbiattack.soundcoreswitch.domain.model.MultipointTarget
+import com.tonbiattack.soundcoreswitch.domain.model.SwitchResult
+import com.tonbiattack.soundcoreswitch.domain.model.SwitchUiState
+import com.tonbiattack.soundcoreswitch.domain.model.TargetListResult
+import com.tonbiattack.soundcoreswitch.domain.model.TargetSnapshot
+import com.tonbiattack.soundcoreswitch.domain.model.TargetsUiState
+import com.tonbiattack.soundcoreswitch.domain.repository.SettingsRepository
+import com.tonbiattack.soundcoreswitch.domain.repository.TargetRepository
+import com.tonbiattack.soundcoreswitch.domain.usecase.SwitchTargetUseCase
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.launch
+
+/**
+ * 画面の状態を組み立てる。
+ *
+ * 設計方針:
+ * - 起動直後はキャッシュだけで即描画し、更新は非同期に行う（仕様書 F-06 / §8）。
+ * - 切り替えは [SwitchTargetUseCase] に委譲し、成功の確定はそこで行う。
+ * - 送信中は [AppUiState.canSwitch] が false になり、二重送信を防ぐ（仕様書 §5）。
+ *
+ * 選択の解決は必ず「イヤホン検出の後」に1か所で行う。検出と前回選択の復元を
+ * 並行して走らせると、復元が空の一覧を見て失敗する競合が起きるため。
+ *
+ * @param scope 画面のライフサイクルに紐づくスコープ。
+ * @param now 現在時刻の供給元。テストで固定するために注入する。
+ */
+class AppViewModel(
+    private val scanner: EarbudsScanner,
+    private val targetRepository: TargetRepository,
+    private val settings: SettingsRepository,
+    private val switchTarget: SwitchTargetUseCase,
+    private val bluetooth: BluetoothAvailabilityChecker,
+    private val scope: CoroutineScope,
+    private val now: () -> Long = System::currentTimeMillis,
+) {
+    private val _state = MutableStateFlow(AppUiState())
+    val state: StateFlow<AppUiState> = _state.asStateFlow()
+
+    private var refreshJob: Job? = null
+    private var switchJob: Job? = null
+
+    /**
+     * 画面表示時に一度だけ呼ぶ。
+     *
+     * Bluetooth の状態を確認してから、検出と接続先の読み込みを非同期に開始する。
+     * UI をブロックしない。
+     */
+    fun start() {
+        _state.update { it.copy(bluetooth = bluetooth.check()) }
+        refresh()
+    }
+
+    /** 権限要求の結果を受けて状態を更新する。 */
+    fun onPermissionResult(granted: Boolean) {
+        _state.update {
+            it.copy(
+                bluetooth = if (granted) bluetooth.check() else BluetoothAvailability.PermissionDenied,
+            )
+        }
+        if (granted) refresh()
+    }
+
+    /**
+     * イヤホンを選び直す。
+     *
+     * 選択を保存し、そのイヤホンの接続先をキャッシュから即表示してから非同期更新する。
+     */
+    fun selectDevice(device: EarbudsDevice) {
+        _state.update {
+            it.copy(
+                selectedDevice = device,
+                targets = TargetsUiState.Loading,
+                switch = SwitchUiState.Idle,
+            )
+        }
+        scope.launch { settings.setLastSelectedAddress(device.address) }
+        loadTargets(device)
+    }
+
+    /** 接続先一覧を再取得する。失敗しても既存の表示は消さない。 */
+    fun refresh() {
+        if (refreshJob?.isActive == true) return
+        refreshJob = scope.launch {
+            _state.update { it.copy(isRefreshing = true) }
+            try {
+                val availability = bluetooth.check()
+                _state.update { it.copy(bluetooth = availability) }
+                if (availability != BluetoothAvailability.Ready) {
+                    return@launch
+                }
+
+                when (val scanned = scanner.scan()) {
+                    is ScanResult.Unavailable -> _state.update {
+                        it.copy(
+                            devices = emptyList(),
+                            targets = TargetsUiState.Unavailable(scanned.reason),
+                        )
+                    }
+                    is ScanResult.Found -> {
+                        val devices = scanned.devices
+                        // 検出が終わってから選択を解決する。ここが唯一の解決点。
+                        val selected = resolveSelection(devices)
+                        _state.update {
+                            it.copy(devices = devices, selectedDevice = selected)
+                        }
+                        if (selected != null) {
+                            // 自動選択された機種も「前回選択」として記憶する（仕様書 F-07）。
+                            settings.setLastSelectedAddress(selected.address)
+                            loadTargets(selected)
+                        } else {
+                            _state.update { it.copy(targets = TargetsUiState.Loading) }
+                        }
+                    }
+                }
+            } finally {
+                _state.update { it.copy(isRefreshing = false) }
+            }
+        }
+    }
+
+    /**
+     * 接続先へ切り替える。
+     *
+     * 送信中は受け付けない（二重送信防止）。結果は [SwitchUiState] に反映する。
+     */
+    fun switchTo(target: MultipointTarget) {
+        val current = _state.value
+        val device = current.selectedDevice ?: return
+        if (!current.canSwitch) return
+        if (switchJob?.isActive == true) return
+
+        _state.update { it.copy(switch = SwitchUiState.InFlight(target.id)) }
+        switchJob = scope.launch {
+            val result = switchTarget.execute(device, target)
+            _state.update { state ->
+                when (result) {
+                    is SwitchResult.Confirmed -> state.copy(
+                        switch = SwitchUiState.Succeeded(result.target.displayName),
+                    )
+                    is SwitchResult.Failed -> state.copy(
+                        switch = SwitchUiState.Failed(target.displayName, result.reason),
+                    )
+                }
+            }
+            // 成功・失敗にかかわらず、表示中の一覧を実際の状態に合わせ直す。
+            loadTargets(device)
+        }
+    }
+
+    /** 切り替え結果の表示を閉じる。 */
+    fun dismissSwitchResult() {
+        _state.update { it.copy(switch = SwitchUiState.Idle) }
+    }
+
+    /**
+     * キャッシュを即表示してから、最新を非同期取得する。
+     *
+     * キャッシュ表示中は [TargetSnapshot.fromCache] が true のままにし、
+     * UI が「古い可能性がある」ことを示せるようにする。
+     */
+    private fun loadTargets(device: EarbudsDevice) {
+        scope.launch {
+            val cached = targetRepository.readCached(device)
+            if (cached != null && _state.value.selectedDevice?.address == device.address) {
+                _state.update { it.copy(targets = TargetsUiState.Ready(cached)) }
+            }
+
+            when (val fresh = targetRepository.fetch(device)) {
+                is TargetListResult.Unavailable -> {
+                    // キャッシュを表示できているなら、それを残したまま失敗を伝える。
+                    val shown = _state.value.targets
+                    _state.update {
+                        it.copy(
+                            targets = if (shown is TargetsUiState.Ready) {
+                                shown
+                            } else {
+                                TargetsUiState.Unavailable(fresh.reason)
+                            },
+                        )
+                    }
+                }
+                is TargetListResult.Available -> {
+                    if (_state.value.selectedDevice?.address != device.address) return@launch
+                    _state.update {
+                        it.copy(
+                            targets = TargetsUiState.Ready(
+                                TargetSnapshot(
+                                    targets = fresh.targets,
+                                    observedAt = now(),
+                                    fromCache = false,
+                                ),
+                            ),
+                        )
+                    }
+                }
+            }
+        }
+    }
+
+    /**
+     * 選択を決める。優先順位は「現在の選択 → 前回選択 → 先頭」。
+     *
+     * 前回選択の復元をここに置くことで、検出結果が揃う前に復元を試みる競合を避ける。
+     */
+    private suspend fun resolveSelection(devices: List<EarbudsDevice>): EarbudsDevice? {
+        if (devices.isEmpty()) return null
+
+        val current = _state.value.selectedDevice
+        val kept = current?.let { selected -> devices.firstOrNull { it.address == selected.address } }
+        if (kept != null) return kept
+
+        val remembered = settings.lastSelectedAddress()
+        if (remembered != null) {
+            val restored = devices.firstOrNull { it.address == remembered }
+            if (restored != null) return restored
+        }
+
+        return devices.first()
+    }
+}
