@@ -235,4 +235,125 @@ class SoundcoreAdapterDeviceRegressionTest {
         assertEquals(2, targets.size)
         assertEquals(ConnectionStatus.CONNECTED, targets[0].status)
     }
+
+    @Test
+    fun `切断が拒否されたら別の端末を試す`() = runTest {
+        // 実機（Space A40）では DELLTOWER の切断が拒否され、OPPO は成功した。
+        // 1台目で諦めず、次の候補を試すこと。
+        val transport = RejectingDisconnectTransport(
+            initial = listOf(
+                Triple("90:FB:C5:9D:28:F4", "DELLTOWER", true),
+                Triple("7A:A7:6A:03:DD:08", "OPPO Reno13 A", true),
+                Triple("00:B3:2C:83:80:D8", "DESKTOP-ILQVMVD", false),
+            ),
+            // DELLTOWER への切断は拒否する。
+            rejectMac = "90:FB:C5:9D:28:F4",
+        )
+        val adapter = SoundcoreMultipointAdapter(
+            transport = transport,
+            localNameProvider = { "OPPO Reno13 A" },
+        )
+
+        val result = adapter.switchTo(device, target(id = "00:B3:2C:83:80:D8"))
+
+        // DELLTOWER は拒否されたが、OPPO は操作元なので候補から外れる。
+        // 結果として切断できる端末が無く、失敗として返るのが正しい。
+        assertEquals(SwitchResult.Failed(FailureReason.SwitchUnconfirmed), result)
+    }
+
+    @Test
+    fun `切断できる端末が無ければ接続せず失敗する`() = runTest {
+        // 上限に達していて1台も切断できない場合、接続コマンドを送っても無駄。
+        // 送信せずに失敗を返すこと。
+        val transport = RejectingDisconnectTransport(
+            initial = listOf(
+                Triple("90:FB:C5:9D:28:F4", "DELLTOWER", true),
+                Triple("7A:A7:6A:03:DD:08", "OPPO Reno13 A", true),
+                Triple("00:B3:2C:83:80:D8", "DESKTOP-ILQVMVD", false),
+            ),
+            rejectMac = "90:FB:C5:9D:28:F4",
+        )
+        val adapter = SoundcoreMultipointAdapter(
+            transport = transport,
+            localNameProvider = { "OPPO Reno13 A" },
+        )
+
+        adapter.switchTo(device, target(id = "00:B3:2C:83:80:D8"))
+
+        val connectCommand =
+            ((SoundcoreProtocol.Cmd.CONNECT_DEVICE[0].toInt() and 0xFF) shl 8) or
+                (SoundcoreProtocol.Cmd.CONNECT_DEVICE[1].toInt() and 0xFF)
+        assertTrue(
+            "切断できていないのに接続コマンドを送っている",
+            connectCommand !in transport.sentCommands,
+        )
+    }
+
+    /**
+     * 特定の端末への切断を拒否するトランスポート。
+     *
+     * 実機で観測した「切断コマンドに応答がなく、状態も変わらない」挙動を再現する。
+     */
+    private class RejectingDisconnectTransport(
+        initial: List<Triple<String, String, Boolean>>,
+        private val rejectMac: String,
+    ) : SoundcoreTransport {
+        private var devices = initial
+        val sentCommands = mutableListOf<Int>()
+
+        override suspend fun exchange(
+            mac: String,
+            modelCode: String,
+            packet: ByteArray,
+            expectedCommand: Int?,
+            timeoutMillis: Long,
+        ): List<ByteArray> {
+            val command = ((packet[5].toInt() and 0xFF) shl 8) or (packet[6].toInt() and 0xFF)
+            sentCommands += command
+            val body = packet.copyOfRange(9, packet.size - 1)
+
+            if (command == commandOf(SoundcoreProtocol.Cmd.DISCONNECT_DEVICE) && body.size >= 6) {
+                val target = SoundcoreProtocol.formatMac(body, 0)
+                if (!target.equals(rejectMac, ignoreCase = true)) {
+                    devices = devices.map { (m, n, c) ->
+                        Triple(m, n, if (m.equals(target, ignoreCase = true)) false else c)
+                    }
+                }
+            }
+
+            return when (command) {
+                SoundcoreProtocol.Rsp.DUAL_DEVICES -> listOf(buildListFrame(devices))
+                else -> emptyList()
+            }
+        }
+
+        private fun commandOf(cmd: ByteArray): Int =
+            ((cmd[0].toInt() and 0xFF) shl 8) or (cmd[1].toInt() and 0xFF)
+
+        private fun buildListFrame(entries: List<Triple<String, String, Boolean>>): ByteArray {
+            val body = mutableListOf<Byte>()
+            body += 1.toByte()
+            body += 1.toByte()
+            entries.forEach { (mac, name, connected) ->
+                val nameBytes = name.toByteArray(Charsets.UTF_8)
+                val nameField = ByteArray(32)
+                nameBytes.copyInto(nameField, 0, 0, minOf(nameBytes.size, 32))
+                body += (8 + nameField.size).toByte()
+                body += if (connected) 1.toByte() else 0.toByte()
+                body += SoundcoreProtocol.parseMac(mac).toList()
+                body += nameField.toList()
+            }
+            val bodyArray = body.toByteArray()
+            val total = SoundcoreProtocol.HEADER_LEN + bodyArray.size + 1
+            val frame = mutableListOf<Byte>()
+            frame += SoundcoreProtocol.DIRECTION_DEVICE_TO_HOST.toList()
+            frame += 0x0B.toByte()
+            frame += 0x01.toByte()
+            frame += (total and 0xFF).toByte()
+            frame += ((total shr 8) and 0xFF).toByte()
+            frame += bodyArray.toList()
+            frame += SoundcoreProtocol.checksum(frame.toByteArray())
+            return frame.toByteArray()
+        }
+    }
 }

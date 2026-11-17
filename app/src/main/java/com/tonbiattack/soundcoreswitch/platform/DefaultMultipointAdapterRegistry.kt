@@ -56,13 +56,22 @@ class DefaultMultipointAdapterRegistry(
             // トランスポートは機種に依存しない（ベンダー UUID は機種コードから組み立てる）。
             // そのため1つのインスタンスを全機種で共有する。
             val transport = AndroidSoundcoreTransport(context)
+            // 接続上限に達したとき、この端末自身を切断しないために名前を渡す。
+            val localName = { localBluetoothName(context) }
+            val logger: (String) -> Unit = { message -> Log.d("SoundcoreAdapter", message) }
+
             return mapOf(
                 // Liberty 4 NC (A3947)。MODEL_ID は "liberty-4-nc"。
                 SoundcoreMultipointAdapter.MODEL_ID to SoundcoreMultipointAdapter(
                     transport = transport,
-                    // 接続上限に達したとき、この端末自身を切断しないために名前を渡す。
-                    localNameProvider = { localBluetoothName(context) },
-                    logger = { Log.d("SoundcoreAdapter", it) },
+                    localNameProvider = localName,
+                    logger = logger,
+                ),
+                // Space A40 (A3936)。2026-11-17 に実機で一覧取得・切断・接続を確認。
+                SoundcoreMultipointAdapter.SPACE_A40_MODEL_ID to SoundcoreMultipointAdapter(
+                    transport = transport,
+                    localNameProvider = localName,
+                    logger = logger,
                 ),
             )
         }

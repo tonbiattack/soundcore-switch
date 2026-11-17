@@ -16,7 +16,7 @@ package com.tonbiattack.soundcoreswitch.domain.model
  */
 object ModelCatalog {
 
-    /** Space A40 (A3936)。所有機種。ベンダー UUID は検出済みだがコマンドは未検証。 */
+    /** Space A40 (A3936)。所有機種。 */
     val SPACE_A40 = EarbudsModel(id = "space-a40", displayName = "Space A40")
 
     /**
@@ -36,8 +36,9 @@ object ModelCatalog {
     private val supportLevels: Map<String, SupportLevel> = mapOf(
         // 実機で一覧取得・切り替えコマンド送信・完了検出まで確認済み。
         LIBERTY_4_NC.id to SupportLevel.SUPPORTED,
-        // ベンダー UUID は検出したが、コマンドの実機検証が未完了。
-        SPACE_A40.id to SupportLevel.UNKNOWN,
+        // 2026-11-17 に実機（Windows）で一覧取得・切断・接続を確認した。
+        // ただし切断は対象によって拒否される場合がある（docs/VERIFICATION_A40.md）。
+        SPACE_A40.id to SupportLevel.SUPPORTED,
     )
 
     /** 既知の機種一覧。 */
