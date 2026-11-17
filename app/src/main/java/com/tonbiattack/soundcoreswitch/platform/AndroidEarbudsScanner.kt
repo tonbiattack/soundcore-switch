@@ -70,7 +70,7 @@ class AndroidEarbudsScanner(
             return ScanResult.Unavailable(FailureReason.PermissionDenied)
         }
 
-        val connected = connectedAddresses(manager)
+        val connected = connectedAddresses(manager, bonded)
 
         val devices = bonded.mapNotNull { device -> toEarbudsDevice(device, connected) }
             .sortedBy { it.displayName.lowercase() }
@@ -119,26 +119,69 @@ class AndroidEarbudsScanner(
     /**
      * 接続状態を公開 API から判定する。
      *
-     * イヤホンは A2DP / HFP で接続されることが多く、BLE の GATT だけを見ると
-     * 接続中でも切断と誤判定し得るため、複数プロファイルを確認する。
+     * イヤホンは A2DP / HFP（クラシック）で接続される。BLE の GATT は別経路であり、
+     * 音声接続の有無を表さない。
      *
-     * @return 接続中アドレスの集合と、全プロファイルを確認できたかどうか。
-     *   1つも取得できなかった場合は [ConnectedSnapshot.complete] が false になる。
+     * **`getConnectedDevices()` だけに頼らない理由**（OPPO CPH2699 / Android 16 で実測）:
+     * この端末では A2DP と HEADSET の `getConnectedDevices()` が失敗し、
+     * `getConnectionState()` も `null` を返した。GATT だけが応答し、しかも
+     * 接続中のイヤホンに対して `STATE_DISCONNECTED` を返した。
+     * その結果、実際には A2DP で接続中のイヤホンを「切断中」と誤判定した。
+     *
+     * そのため、**クラシック音声プロファイル（A2DP / HEADSET）のいずれかを
+     * 確認できた場合に限り**判定完了とみなす。GATT だけでは判定しない。
+     * 判定できない場合は [ConnectionStatus.UNKNOWN] とし、切断と断定しない
+     * （仕様書 F-02「取得不可は不明」）。
+     *
+     * @return 接続中アドレスの集合と、判定を完了できたかどうか。
      */
     @SuppressLint("MissingPermission")
-    private fun connectedAddresses(manager: BluetoothManager): ConnectedSnapshot {
+    private fun connectedAddresses(
+        manager: BluetoothManager,
+        bonded: Set<BluetoothDevice>,
+    ): ConnectedSnapshot {
         val addresses = mutableSetOf<String>()
-        var complete = true
+        var classicProfileResolved = false
+
+        // 1. プロファイル単位の一覧。取れれば最も確実。
         for (profile in MONITORED_PROFILES) {
-            // 端末やプロファイルによっては IllegalArgumentException 等が飛ぶため個別に握る。
-            val devices = runCatching { manager.getConnectedDevices(profile) }.getOrNull()
+            val result = runCatching { manager.getConnectedDevices(profile) }
+            val devices = result.getOrNull()
             if (devices == null) {
-                complete = false
+                Log.d(
+                    TAG,
+                    "profile=$profile 取得失敗 ${result.exceptionOrNull()?.javaClass?.simpleName}",
+                )
                 continue
             }
+            if (profile in CLASSIC_AUDIO_PROFILES) classicProfileResolved = true
             devices.mapNotNullTo(addresses) { runCatching { it.address }.getOrNull() }
         }
-        return ConnectedSnapshot(addresses = addresses, complete = complete)
+
+        // 2. デバイス単位の接続状態。プロファイル一覧が取れない端末向けの代替経路。
+        for (device in bonded) {
+            val address = runCatching { device.address }.getOrNull() ?: continue
+            if (address in addresses) continue
+            for (profile in MONITORED_PROFILES) {
+                val state = runCatching { manager.getConnectionState(device, profile) }.getOrNull()
+                if (state == null) continue
+                if (profile in CLASSIC_AUDIO_PROFILES) classicProfileResolved = true
+                if (state == BluetoothProfile.STATE_CONNECTED) {
+                    addresses += address
+                    break
+                }
+            }
+        }
+
+        Log.d(
+            TAG,
+            "接続中=${addresses.size} 件 クラシック音声の判定可否=$classicProfileResolved",
+        )
+        return ConnectedSnapshot(
+            addresses = addresses,
+            // GATT しか確認できていない場合は、切断と断定できない。
+            complete = classicProfileResolved,
+        )
     }
 
     @SuppressLint("MissingPermission")
@@ -149,8 +192,8 @@ class AndroidEarbudsScanner(
         val address = runCatching { device.address }.getOrNull() ?: return ConnectionStatus.UNKNOWN
         // いずれかのプロファイルで接続中なら CONNECTED。
         if (address in connected.addresses) return ConnectionStatus.CONNECTED
-        // 全プロファイルを確認できたうえで見つからない場合だけ DISCONNECTED と言える。
-        // 一部しか確認できていない場合は、切断と断定せず UNKNOWN にする（仕様書 F-02）。
+        // 判定を完了できたうえで見つからない場合だけ DISCONNECTED と言える。
+        // 判定できていない場合は、切断と断定せず UNKNOWN にする（仕様書 F-02）。
         return if (connected.complete) ConnectionStatus.DISCONNECTED else ConnectionStatus.UNKNOWN
     }
 
@@ -182,6 +225,17 @@ class AndroidEarbudsScanner(
             BluetoothProfile.A2DP,
             BluetoothProfile.HEADSET,
             BluetoothProfile.GATT,
+        )
+
+        /**
+         * クラシック音声プロファイル。
+         *
+         * イヤホンの接続はこのいずれかで表される。GATT は BLE の別経路であり、
+         * 音声接続の有無を表さないため、これだけで「切断中」と断定してはならない。
+         */
+        val CLASSIC_AUDIO_PROFILES = intArrayOf(
+            BluetoothProfile.A2DP,
+            BluetoothProfile.HEADSET,
         )
     }
 }

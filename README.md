@@ -24,10 +24,22 @@ Soundcore 純正アプリを開かずに、マルチポイント接続先の状�
 
 | 機種 | 型番 | 状態 |
 |---|---|---|
-| soundcore Liberty 4 NC | A3947 | ✅ 実機検証済み（一覧取得・切り替え・完了検出） |
+| soundcore Liberty 4 NC | A3947 | ✅ 実機検証済み（Windows / Android 両方） |
 | Soundcore Space A40 | A3936 | ⚠️ 未検証（表示のみ） |
 
 詳細は [docs/SUPPORT_MATRIX.md](docs/SUPPORT_MATRIX.md) を参照。
+
+### 既知の制約
+
+- **Soundcore 純正アプリが起動していると接続に失敗します。** 純正アプリが
+  RFCOMM チャネルを占有するため、本アプリを使う際は純正アプリを終了してください。
+- 同時接続は機種の上限（Liberty 4 NC は2台）に従います。上限に達している場合、
+  アプリが自動的に1台を切断してから接続します。
+- 端末によっては Bluetooth のプロファイル API が使えず、イヤホンの接続状態が
+  「不明」と表示されます（OPPO CPH2699 で確認）。その場合も切り替え操作は可能で、
+  実際に到達できたかは通信結果で判断します。
+- 同名のイヤホンを複数ペアリングしている場合、一覧に同名で複数表示されます。
+  接続状態のドットで判別してください。
 
 ### なぜ実現できたのか
 
@@ -187,6 +199,7 @@ desktop/                       # Windows
 | [docs/SPEC.md](docs/SPEC.md) | 仕様書 |
 | [docs/RESEARCH.md](docs/RESEARCH.md) | 技術調査（プロトコル仕様・実測ログ） |
 | [docs/SUPPORT_MATRIX.md](docs/SUPPORT_MATRIX.md) | 機種別の対応状況 |
+| [docs/VERIFICATION_ANDROID.md](docs/VERIFICATION_ANDROID.md) | Android 実機検証レポート |
 | [docs/MEASUREMENT.md](docs/MEASUREMENT.md) | 操作数・待ち時間の計測 |
 
 ## ライセンス
