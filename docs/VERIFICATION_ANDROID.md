@@ -4,6 +4,11 @@
 対象: OPPO CPH2699（Android 16 / API 36 / ColorOS）
 イヤホン: soundcore Liberty 4 NC (A3947)
 
+> このドキュメントは **Android 実機での検証記録**である。
+> 検証で見つけて直した不具合と、その再現条件を残す。
+> プロトコルの仕様は [RESEARCH.md](./RESEARCH.md)、
+> Space A40 固有の知見は [VERIFICATION_A40.md](./VERIFICATION_A40.md) を参照。
+
 ## 1. 結論
 
 **Android 実機で接続先一覧の取得と切り替えに成功した。** ただし実機検証で

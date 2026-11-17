@@ -3,6 +3,8 @@
 Soundcore 純正アプリを開かずに、マルチポイント接続先の状態確認と切り替えを行うアプリ。
 **Android と Windows の両方で動作します。**
 
+> 個人利用を想定した非公開プロジェクトです。Anker とは無関係の非公式ツールです。
+
 ## 目的
 
 純正アプリで接続先を切り替えるには「起動 → イヤホン読込 → 設定画面 → 接続先変更」という
@@ -54,10 +56,6 @@ RFCOMM プロトコル**を実機で解読して実装している。
 ```
 
 プロトコルの詳細と実測ログは [docs/RESEARCH.md](docs/RESEARCH.md) を参照。
-
-> **注意**: 同時接続は機種の上限（Liberty 4 NC は2台）に従う。上限に達している場合、
-> アプリは自動的に1台を切断してから接続する。この手順を省くと切り替えが効かない
-> ことを実機で確認している。
 
 ## 動作環境
 
@@ -197,12 +195,22 @@ desktop/                       # Windows
 
 | ドキュメント | 内容 |
 |---|---|
-| [docs/SPEC.md](docs/SPEC.md) | 仕様書 |
-| [docs/RESEARCH.md](docs/RESEARCH.md) | 技術調査（プロトコル仕様・実測ログ） |
-| [docs/SUPPORT_MATRIX.md](docs/SUPPORT_MATRIX.md) | 機種別の対応状況 |
+| [docs/README.md](docs/README.md) | **ドキュメント索引**（読む順序・役割分担） |
+| [docs/SPEC.md](docs/SPEC.md) | 仕様書（要件の正） |
+| [docs/RESEARCH.md](docs/RESEARCH.md) | 技術調査（プロトコルの正・実測ログ） |
+| [docs/SUPPORT_MATRIX.md](docs/SUPPORT_MATRIX.md) | 機種別の対応状況（機種対応の正） |
 | [docs/VERIFICATION_ANDROID.md](docs/VERIFICATION_ANDROID.md) | Android 実機検証レポート |
 | [docs/VERIFICATION_A40.md](docs/VERIFICATION_A40.md) | Space A40 実機検証レポート |
-| [docs/MEASUREMENT.md](docs/MEASUREMENT.md) | 操作数・待ち時間の計測 |
+| [docs/MEASUREMENT.md](docs/MEASUREMENT.md) | 操作数・待ち時間・異常系テスト |
+
+開発方針・ブランチ運用・守るべき原則は [AGENTS.md](AGENTS.md) にまとめています。
+
+## スクリプト
+
+| スクリプト | 用途 |
+|---|---|
+| `scripts/gradle.ps1` | PATH の括弧問題を回避して Gradle を実行する |
+| `scripts/probe-soundcore.ps1` | プロトコルを直接叩いて接続先一覧と実状態を並べて確認する |
 
 ## ライセンス
 
@@ -210,3 +218,6 @@ desktop/                       # Windows
 
 プロトコルの解読にあたり [BudsLink](https://github.com/maniacx/BudsLink)（GPL-3.0）を
 参考にしたが、コードは取り込んでいない。実機で取得した応答を独自に解析したものである。
+
+本プロジェクトは Anker Innovations および Soundcore ブランドとは無関係の非公式ツールであり、
+同社による承認・後援を受けたものではない。製品名は識別の目的でのみ使用している。

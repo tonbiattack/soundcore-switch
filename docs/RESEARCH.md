@@ -4,6 +4,11 @@
 
 最終更新: 2026-11-17
 
+> このドキュメントは**プロトコルの正**である。コマンド体系・パケット形式・実測ログを扱う。
+> 機種ごとの対応可否は [SUPPORT_MATRIX.md](./SUPPORT_MATRIX.md)、
+> 実機での検証記録は [VERIFICATION_ANDROID.md](./VERIFICATION_ANDROID.md) /
+> [VERIFICATION_A40.md](./VERIFICATION_A40.md) を参照。
+
 ## 1. 結論
 
 **実機で接続先一覧の取得と切り替えコマンドの送信に成功した。**
@@ -17,14 +22,32 @@
 
 これにより、仕様書 §6 の縮小案ではなく**本来の目的（ワンタップ切り替え）が実現可能**と判明した。
 
+### 1.1 実装上の最重要事項
+
+**コマンドの応答有無だけでは成否を判定できない。** 実機で次の両方を観測した。
+
+| 操作 | 応答 | 実際の結果 |
+|---|---|---|
+| 切断（対象A） | あり | 成功 |
+| 切断（対象B） | なし | 失敗（拒否） |
+| 接続 | なし | 成功 |
+
+そのため、成否は**必ず一覧を再取得して状態で確認する**。
+詳細は [VERIFICATION_A40.md](./VERIFICATION_A40.md) §3 を参照。
+
 ## 2. 実機情報
 
-| 機種 | 型番 | ベンダー UUID 末尾 | 状態 |
+| 機種 | 型番 | ベンダー UUID 末尾 | プロトコル検証 |
 |---|---|---|---|
-| Soundcore Space A40 | A3936 | `...e7b3936` | 検出確認済み |
-| soundcore Liberty 4 NC | A3947 | `...e7b3947` | **プロトコル実機検証済み** |
+| soundcore Liberty 4 NC | A3947 | `...e7b3947` | ✅ Windows / Android 両方 |
+| Soundcore Space A40 | A3936 | `...e7b3936` | ✅ Windows |
 
-検証環境: Windows 11 / MediaTek Bluetooth Adapter / Liberty 4 NC を A2DP 接続。
+検証環境:
+
+- Windows 11 / MediaTek Bluetooth Adapter
+- Android: OPPO CPH2699（Android 16 / API 36）
+
+機種ごとの詳細な対応状況は [SUPPORT_MATRIX.md](./SUPPORT_MATRIX.md) を参照。
 
 ## 3. プロトコル仕様（実機で解読）
 
@@ -151,6 +174,25 @@ TX: 08 EE 00 00 00 0B 82 10 00 00 B3 2C 83 80 D8 4D
 
 ## 6. 再現手順
 
+プロトコルを直接叩いて確認するためのスクリプトを同梱している。
+
+```powershell
+# イヤホンを PC に接続した状態で実行する
+.\scripts\probe-soundcore.ps1 -Mac <MACアドレス> -ModelCode <機種コード4桁>
+
+# 例: Space A40 (A3936)
+.\scripts\probe-soundcore.ps1 -Mac 880E85018154 -ModelCode 3936
+```
+
+このスクリプトは次を並べて表示する。
+
+- イヤホンが報告する接続先一覧と接続状態
+- Windows が認識している接続状態（独立した情報源）
+
+両者が食い違うことで、応答と実効果のずれに気づける。
+
+手動で試す場合の手順:
+
 ```powershell
 # 1. イヤホンを PC に接続しておく
 # 2. ベンダー UUID で RFCOMM 接続し、GET_DEVICES を送る
@@ -162,11 +204,17 @@ TX: 08 EE 00 00 00 0B 82 10 00 00 B3 2C 83 80 D8 4D
 
 ## 7. 未確認点
 
-- Space A40 (A3936) でのプロトコル動作（UUID は検出済み、コマンドは未検証）
+- Space A40 の `dualEnabledOffset`（状態 body のどこに有効フラグがあるか）
+- 切断が拒否される条件（対象の PC が接続を維持しているためと推測）
 - 3台以上の同時接続に対応する機種があるか
-- 切断 (`0B 81`) → 接続 (`0B 82`) の連続実行で確実に切り替わるか
-- Android 実機での RFCOMM 接続（`BluetoothSocket` + ベンダー UUID）
 - ファームウェアによる差異
+- 他メーカー端末での Bluetooth プロファイル API の挙動
+
+解決済み（記録として残す）:
+
+- ~~Space A40 でのプロトコル動作~~ → 2026-11-17 に Windows で確認
+- ~~Android 実機での RFCOMM 接続~~ → 2026-11-17 に OPPO CPH2699 で確認
+- ~~切断→接続の連続実行~~ → 切断の成否を状態で確認する実装に変更して解決
 
 ## 8. セキュリティ・プライバシー
 
