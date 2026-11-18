@@ -49,6 +49,8 @@ fun AppRoute(viewModel: AppViewModel) {
             }
         },
         onDismissSwitchResult = viewModel::dismissSwitchResult,
+        onToggleFavorite = viewModel::toggleFavorite,
+        onToggleProtection = viewModel::toggleProtection,
     )
 }
 

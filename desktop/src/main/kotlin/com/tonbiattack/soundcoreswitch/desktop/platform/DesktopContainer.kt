@@ -9,9 +9,11 @@ import com.tonbiattack.soundcoreswitch.domain.model.ConnectionStatus
 import com.tonbiattack.soundcoreswitch.domain.model.EarbudsDevice
 import com.tonbiattack.soundcoreswitch.domain.model.FailureReason
 import com.tonbiattack.soundcoreswitch.domain.model.MultipointTarget
+import com.tonbiattack.soundcoreswitch.domain.model.ProtectionSettings
 import com.tonbiattack.soundcoreswitch.domain.model.TargetKind
 import com.tonbiattack.soundcoreswitch.domain.model.TargetListResult
 import com.tonbiattack.soundcoreswitch.domain.model.TargetSnapshot
+import com.tonbiattack.soundcoreswitch.domain.repository.ProtectionCache
 import com.tonbiattack.soundcoreswitch.domain.repository.SettingsRepository
 import com.tonbiattack.soundcoreswitch.domain.repository.TargetCache
 import com.tonbiattack.soundcoreswitch.domain.repository.TargetRepository
@@ -57,6 +59,14 @@ class DesktopContainer {
         PropertiesSettingsRepository(File(storageDir, SETTINGS_FILE_NAME))
 
     /**
+     * 保護設定のメモリキャッシュ。
+     *
+     * アダプタは切断候補を選ぶ際に同期的に参照する必要があるため、
+     * DataStore（ここでは Properties）の内容をメモリに保持する。
+     */
+    val protectionCache: ProtectionCache = ProtectionCache(settings)
+
+    /**
      * 機種 ID からアダプタを引くレジストリ。
      *
      * 実機検証が完了した機種だけを登録する。登録と
@@ -68,19 +78,23 @@ class DesktopContainer {
      */
     val registry: MultipointAdapterRegistry = run {
         val transport = SoundcoreRfcommTransport()
-        // 接続上限に達したとき、この端末自身を切断しないために名前を渡す。
-        val localName = { localBluetoothName() }
+        // 接続上限に達したとき、この端末自身を切断しないために ID を渡す。
+        // Windows の Bluetooth アドレスは取得しにくいため、名前で照合する。
+        val thisDeviceId = { localBluetoothAddress() }
+        val protection = { protectionCache.current() }
         DefaultMultipointAdapterRegistry(
             mapOf(
                 // Liberty 4 NC (A3947)。
                 SoundcoreMultipointAdapter.MODEL_ID to SoundcoreMultipointAdapter(
                     transport = transport,
-                    localNameProvider = localName,
+                    thisDeviceIdProvider = thisDeviceId,
+                    protectionProvider = protection,
                 ),
                 // Space A40 (A3936)。2026-11-17 に実機で一覧取得・切断・接続を確認。
                 SoundcoreMultipointAdapter.SPACE_A40_MODEL_ID to SoundcoreMultipointAdapter(
                     transport = transport,
-                    localNameProvider = localName,
+                    thisDeviceIdProvider = thisDeviceId,
+                    protectionProvider = protection,
                 ),
             ),
         )
@@ -93,16 +107,22 @@ class DesktopContainer {
     /**
      * 画面用の [AppViewModel] を組み立てる。
      *
+     * トレイからも同じ状態を参照できるよう、生成したインスタンスを保持する。
+     *
      * @param scope 画面のライフサイクルに紐づくスコープ。呼び出し側が管理する。
      */
-    fun createViewModel(scope: CoroutineScope): AppViewModel = AppViewModel(
-        scanner = scanner,
-        targetRepository = targetRepository,
-        settings = settings,
-        switchTarget = switchTarget,
-        bluetooth = bluetooth,
-        scope = scope,
-    )
+    fun createViewModel(scope: CoroutineScope): AppViewModel {
+        val viewModel = AppViewModel(
+            scanner = scanner,
+            targetRepository = targetRepository,
+            settings = settings,
+            switchTarget = switchTarget,
+            bluetooth = bluetooth,
+            scope = scope,
+        )
+        activeViewModel = viewModel
+        return viewModel
+    }
 
     /**
      * 保持しているリソースを解放する。
@@ -115,16 +135,46 @@ class DesktopContainer {
     }
 
     /**
-     * この PC の Bluetooth 名。
+     * 現在選択中のイヤホン。
      *
-     * 接続先一覧の表示名と照合して「操作元の端末」を特定するために使う。
-     * 接続上限に達したとき、この PC 自身を切断しないための手掛かりになる。
-     *
-     * Windows の Bluetooth 名は既定でコンピューター名と同じ。
-     * 取得できなければ null（呼び出し側は別の手掛かりに落ちる）。
+     * トレイから切り替えるときに使う。画面の ViewModel が持つ選択状態と
+     * 同じものを参照するため、[createViewModel] で作ったインスタンスを保持する。
      */
-    private fun localBluetoothName(): String? = runCatching {
-        System.getenv("COMPUTERNAME")?.takeIf { it.isNotBlank() }
+    private var activeViewModel: AppViewModel? = null
+
+    /** 現在選択中のイヤホン。未選択なら null。 */
+    fun currentDevice(): EarbudsDevice? = activeViewModel?.state?.value?.selectedDevice
+
+    /** トレイの「更新」から接続先を再取得する。 */
+    fun refreshFromTray(scope: CoroutineScope) {
+        activeViewModel?.refresh()
+    }
+
+    /**
+     * この PC の Bluetooth アドレス。
+     *
+     * 接続先一覧の ID と照合して「操作元の端末」を特定するために使う。
+     * **名前ではなく MAC で判定する**（端末名は変更でき、同名もあり得るため）。
+     *
+     * Windows のローカル Bluetooth アドレスは Win32 API から取得しにくい。
+     * 取得できなければ null を返し、呼び出し側は安全側（自動切断しない）に倒れる。
+     */
+    private fun localBluetoothAddress(): String? = runCatching {
+        // レジストリからローカルラジオのアドレスを読む。
+        // 取得できなければ null（安全側に倒れる）。
+        val process = ProcessBuilder(
+            "reg", "query",
+            "HKLM\\SYSTEM\\CurrentControlSet\\Control\\Class\\{e0cbf06c-cd8b-4647-bb8a-263b43f0f974}\\{00000000-0000-0000-0000-000000000000}",
+            "/v", "BluetoothAddress",
+        ).redirectErrorStream(true).start()
+        val output = process.inputStream.bufferedReader().readText()
+        process.waitFor()
+        // 例: "    BluetoothAddress    REG_BINARY    54439D8AF4"
+        val match = Regex("BluetoothAddress\\s+REG_BINARY\\s+([0-9A-Fa-f]+)").find(output)
+        val hex = match?.groupValues?.get(1) ?: return null
+        if (hex.length != 12) return null
+        // リトルエンディアンで格納されているため、バイト単位で逆順にする。
+        hex.chunked(2).reversed().joinToString(":").uppercase()
     }.getOrNull()
 }
 
@@ -405,8 +455,94 @@ private class PropertiesSettingsRepository(
             }
         }
 
+    override suspend fun favoriteTargetIds(): Set<String> = withContext(Dispatchers.IO) {
+        try {
+            loadProperties(file)?.getProperty(KEY_FAVORITE_TARGETS)
+                ?.split(SEPARATOR)
+                ?.filter { it.isNotBlank() }
+                ?.toSet()
+                .orEmpty()
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            emptySet()
+        }
+    }
+
+    override suspend fun setFavorite(targetId: String, favorite: Boolean): Unit =
+        withContext(Dispatchers.IO) {
+            try {
+                val properties = loadProperties(file) ?: Properties()
+                val current = properties.getProperty(KEY_FAVORITE_TARGETS)
+                    ?.split(SEPARATOR)
+                    ?.filter { it.isNotBlank() }
+                    ?.toMutableSet()
+                    ?: mutableSetOf()
+                if (favorite) current += targetId else current -= targetId
+                properties.setProperty(KEY_FAVORITE_TARGETS, current.joinToString(SEPARATOR))
+                storeProperties(file, properties)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                // 保存失敗でアプリを止めない。
+            }
+        }
+
+    override suspend fun protectionSettings(): ProtectionSettings = withContext(Dispatchers.IO) {
+        try {
+            val properties = loadProperties(file)
+            ProtectionSettings(
+                protectedTargetIds = properties?.getProperty(KEY_PROTECTED_TARGETS)
+                    ?.split(SEPARATOR)
+                    ?.filter { it.isNotBlank() }
+                    ?.toSet()
+                    .orEmpty(),
+                neverDisconnectUnknown = properties
+                    ?.getProperty(KEY_NEVER_DISCONNECT_UNKNOWN)
+                    ?.toBooleanStrictOrNull()
+                    ?: true,
+            )
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            ProtectionSettings()
+        }
+    }
+
+    override suspend fun setProtectionSettings(settings: ProtectionSettings): Unit =
+        withContext(Dispatchers.IO) {
+            try {
+                val properties = loadProperties(file) ?: Properties()
+                properties.setProperty(
+                    KEY_PROTECTED_TARGETS,
+                    settings.protectedTargetIds.joinToString(SEPARATOR),
+                )
+                properties.setProperty(
+                    KEY_NEVER_DISCONNECT_UNKNOWN,
+                    settings.neverDisconnectUnknown.toString(),
+                )
+                storeProperties(file, properties)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                // 保存失敗でアプリを止めない。
+            }
+        }
+
     private companion object {
         const val KEY_LAST_SELECTED_ADDRESS = "last_selected_address"
+
+        /** お気に入りの接続先 ID（MAC）。カンマ区切りで保存する。 */
+        const val KEY_FAVORITE_TARGETS = "favorite_targets"
+
+        /** 保護された接続先 ID（MAC）。 */
+        const val KEY_PROTECTED_TARGETS = "protected_targets"
+
+        /** 操作元を特定できない場合に自動切断を禁止するか。 */
+        const val KEY_NEVER_DISCONNECT_UNKNOWN = "never_disconnect_unknown"
+
+        /** 複数 ID の区切り。MAC に現れない文字を使う。 */
+        const val SEPARATOR = ","
     }
 }
 
