@@ -68,6 +68,8 @@ import kotlinx.coroutines.delay
  * @param onRefresh 接続先一覧を再取得する。
  * @param onRequestPermission Bluetooth 権限を要求する。
  * @param onDismissSwitchResult 切り替え結果の表示を閉じる。
+ * @param onToggleFavorite 接続先のお気に入りを切り替える。
+ * @param onToggleProtection 接続先の保護（自動切断の禁止）を切り替える。
  */
 @Composable
 fun AppScreen(
@@ -77,6 +79,8 @@ fun AppScreen(
     onRefresh: () -> Unit,
     onRequestPermission: () -> Unit,
     onDismissSwitchResult: () -> Unit,
+    onToggleFavorite: (String) -> Unit,
+    onToggleProtection: (String) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     Scaffold(modifier = modifier) { innerPadding ->
@@ -132,6 +136,8 @@ fun AppScreen(
                 state = state,
                 onSwitch = onSwitch,
                 onRefresh = onRefresh,
+                onToggleFavorite = onToggleFavorite,
+                onToggleProtection = onToggleProtection,
             )
         }
     }
@@ -327,6 +333,8 @@ private fun TargetsSection(
     state: AppUiState,
     onSwitch: (MultipointTarget) -> Unit,
     onRefresh: () -> Unit,
+    onToggleFavorite: (String) -> Unit,
+    onToggleProtection: (String) -> Unit,
 ) {
     // イヤホンが未選択のまま「読み込み中」を出し続けると、いつまでも待たせているように見える。
     // 先に何をすればよいかを伝える。
@@ -390,8 +398,12 @@ private fun TargetsSection(
                 canSwitch = state.canSwitch,
                 switchState = state.switch,
                 selectedDevice = state.selectedDevice,
+                favoriteTargetIds = state.favoriteTargetIds,
+                protectedTargetIds = state.protectedTargetIds,
                 onSwitch = onSwitch,
                 onRefresh = onRefresh,
+                onToggleFavorite = onToggleFavorite,
+                onToggleProtection = onToggleProtection,
             )
         }
     }
@@ -404,8 +416,12 @@ private fun TargetList(
     canSwitch: Boolean,
     switchState: SwitchUiState,
     selectedDevice: EarbudsDevice?,
+    favoriteTargetIds: Set<String>,
+    protectedTargetIds: Set<String>,
     onSwitch: (MultipointTarget) -> Unit,
     onRefresh: () -> Unit,
+    onToggleFavorite: (String) -> Unit,
+    onToggleProtection: (String) -> Unit,
 ) {
     if (snapshot.targets.isEmpty()) {
         Text(
@@ -426,7 +442,11 @@ private fun TargetList(
                 enabled = canSwitch,
                 inFlight = switchState is SwitchUiState.InFlight &&
                     switchState.targetId == target.id,
+                isFavorite = target.id in favoriteTargetIds,
+                isProtected = target.id in protectedTargetIds,
                 onSwitch = onSwitch,
+                onToggleFavorite = onToggleFavorite,
+                onToggleProtection = onToggleProtection,
             )
         }
         item {
@@ -446,7 +466,11 @@ private fun TargetRow(
     target: MultipointTarget,
     enabled: Boolean,
     inFlight: Boolean,
+    isFavorite: Boolean,
+    isProtected: Boolean,
     onSwitch: (MultipointTarget) -> Unit,
+    onToggleFavorite: (String) -> Unit,
+    onToggleProtection: (String) -> Unit,
 ) {
     val isConnected = target.status == ConnectionStatus.CONNECTED
     Card(
@@ -488,6 +512,10 @@ private fun TargetRow(
                         Spacer(Modifier.width(6.dp))
                         Badge(text = "この端末")
                     }
+                    if (isProtected) {
+                        Spacer(Modifier.width(6.dp))
+                        Badge(text = "保護")
+                    }
                 }
                 Text(
                     text = target.status.label(),
@@ -500,8 +528,62 @@ private fun TargetRow(
                     modifier = Modifier.size(18.dp),
                     strokeWidth = 2.dp,
                 )
+            } else {
+                // お気に入りと保護の切り替え。行のタップ（切り替え）と競合しないよう
+                // 個別のボタンとして置く。
+                IconToggle(
+                    checked = isFavorite,
+                    contentDescription = if (isFavorite) {
+                        "${target.displayName} をお気に入りから外す"
+                    } else {
+                        "${target.displayName} をお気に入りに追加"
+                    },
+                    label = if (isFavorite) "★" else "☆",
+                    onClick = { onToggleFavorite(target.id) },
+                )
+                IconToggle(
+                    checked = isProtected,
+                    contentDescription = if (isProtected) {
+                        "${target.displayName} の保護を解除"
+                    } else {
+                        "${target.displayName} を保護（自動切断しない）"
+                    },
+                    label = if (isProtected) "🔒" else "🔓",
+                    onClick = { onToggleProtection(target.id) },
+                )
             }
         }
+    }
+}
+
+/**
+ * 小さな切り替えボタン。
+ *
+ * アイコンライブラリを増やさないため、文字（★/☆、🔒/🔓）で表現する。
+ * タップ領域は 48dp 以上を確保する。
+ */
+@Composable
+private fun IconToggle(
+    checked: Boolean,
+    contentDescription: String,
+    label: String,
+    onClick: () -> Unit,
+) {
+    TextButton(
+        onClick = onClick,
+        modifier = Modifier
+            .size(48.dp)
+            .semantics { this.contentDescription = contentDescription },
+    ) {
+        Text(
+            text = label,
+            style = MaterialTheme.typography.titleMedium,
+            color = if (checked) {
+                MaterialTheme.colorScheme.primary
+            } else {
+                MaterialTheme.colorScheme.onSurfaceVariant
+            },
+        )
     }
 }
 

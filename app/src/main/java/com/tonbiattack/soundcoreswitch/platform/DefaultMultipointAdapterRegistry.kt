@@ -7,6 +7,7 @@ import android.util.Log
 import com.tonbiattack.soundcoreswitch.adapter.SoundcoreMultipointAdapter
 import com.tonbiattack.soundcoreswitch.domain.adapter.MultipointAdapter
 import com.tonbiattack.soundcoreswitch.domain.adapter.MultipointAdapterRegistry
+import com.tonbiattack.soundcoreswitch.domain.model.ProtectionSettings
 
 /**
  * 機種 ID からアダプタを引くレジストリの実装。
@@ -41,7 +42,17 @@ import com.tonbiattack.soundcoreswitch.domain.adapter.MultipointAdapterRegistry
  */
 class DefaultMultipointAdapterRegistry(
     context: Context,
-    private val adapters: Map<String, MultipointAdapter> = verifiedAdapters(context),
+    /**
+     * 保護設定の供給元。
+     *
+     * 接続上限に達したとき、保護された端末を自動切断しないために使う。
+     * 設定は非同期に読むため、同期的に取得できるキャッシュを渡す想定。
+     */
+    protectionProvider: () -> ProtectionSettings = { ProtectionSettings() },
+    private val adapters: Map<String, MultipointAdapter> = verifiedAdapters(
+        context,
+        protectionProvider,
+    ),
 ) : MultipointAdapterRegistry {
 
     override fun adapterFor(modelId: String): MultipointAdapter? = adapters[modelId]
@@ -52,40 +63,56 @@ class DefaultMultipointAdapterRegistry(
          *
          * ここに追加できるのは `docs/SUPPORT_MATRIX.md` で `supported` と記録された機種だけ。
          */
-        fun verifiedAdapters(context: Context): Map<String, MultipointAdapter> {
+        fun verifiedAdapters(
+            context: Context,
+            protectionProvider: () -> ProtectionSettings,
+        ): Map<String, MultipointAdapter> {
             // トランスポートは機種に依存しない（ベンダー UUID は機種コードから組み立てる）。
             // そのため1つのインスタンスを全機種で共有する。
             val transport = AndroidSoundcoreTransport(context)
-            // 接続上限に達したとき、この端末自身を切断しないために名前を渡す。
-            val localName = { localBluetoothName(context) }
+            // 接続上限に達したとき、この端末自身を切断しないために ID を渡す。
+            val thisDeviceId = { localBluetoothAddress(context) }
             val logger: (String) -> Unit = { message -> Log.d("SoundcoreAdapter", message) }
 
             return mapOf(
                 // Liberty 4 NC (A3947)。MODEL_ID は "liberty-4-nc"。
                 SoundcoreMultipointAdapter.MODEL_ID to SoundcoreMultipointAdapter(
                     transport = transport,
-                    localNameProvider = localName,
+                    thisDeviceIdProvider = thisDeviceId,
+                    protectionProvider = protectionProvider,
                     logger = logger,
                 ),
                 // Space A40 (A3936)。2026-11-17 に実機で一覧取得・切断・接続を確認。
                 SoundcoreMultipointAdapter.SPACE_A40_MODEL_ID to SoundcoreMultipointAdapter(
                     transport = transport,
-                    localNameProvider = localName,
+                    thisDeviceIdProvider = thisDeviceId,
+                    protectionProvider = protectionProvider,
                     logger = logger,
                 ),
             )
         }
 
         /**
-         * この端末の Bluetooth 名。
+         * この端末の Bluetooth アドレス（MAC）。
          *
-         * 接続先一覧の表示名と照合して「操作元の端末」を特定するために使う。
-         * 権限が無いなどで取得できなければ null（呼び出し側は別の手掛かりに落ちる）。
+         * 接続先一覧の ID と照合して「操作元の端末」を特定するために使う。
+         * **名前ではなく MAC で判定する**（端末名は変更でき、同名もあり得るため）。
+         *
+         * Android 6.0 以降、`BluetoothAdapter.getAddress()` はアプリに
+         * `02:00:00:00:00:00` を返すため使えない。代わりに
+         * `Settings.Secure.ANDROID_ID` ではなく、ローカルアダプタのアドレスを
+         * リフレクションで取得する。取得できなければ null を返し、
+         * 呼び出し側は安全側（自動切断しない）に倒れる。
          */
-        @SuppressLint("MissingPermission")
-        fun localBluetoothName(context: Context): String? = runCatching {
+        @SuppressLint("MissingPermission", "HardwareIds")
+        fun localBluetoothAddress(context: Context): String? = runCatching {
             val manager = context.getSystemService(Context.BLUETOOTH_SERVICE) as? BluetoothManager
-            manager?.adapter?.name?.takeIf { it.isNotBlank() }
+            val adapter = manager?.adapter ?: return null
+            // 公開 API では取得できないため、非公開フィールドを読む。
+            // 失敗しても安全側に倒れるだけなので、例外は握る。
+            val method = adapter.javaClass.getMethod("getAddress")
+            (method.invoke(adapter) as? String)
+                ?.takeIf { it.isNotBlank() && it != "02:00:00:00:00:00" }
         }.getOrNull()
     }
 }

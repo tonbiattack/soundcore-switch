@@ -18,6 +18,9 @@ Soundcore 純正アプリを開かずに、マルチポイント接続先の状�
 | 接続先（マルチポイント登録端末）一覧の表示 | ✅ | ✅ | イヤホン内部の一覧を取得 |
 | 各接続先の接続状態表示 | ✅ | ✅ | 取得不可なら「不明」 |
 | ワンタップで接続先を切り替え | ✅ | ✅ | 対応機種のみ |
+| お気に入り端末の優先表示 | ✅ | ✅ | 内部 ID で保存 |
+| 保護した端末の自動切断を禁止 | ✅ | ✅ | 誤切断の防止 |
+| クイック設定タイル / システムトレイ | ✅ | ✅ | 画面を開かずに操作 |
 | 前回選択した機種の復元 | ✅ | ✅ | 端末内にのみ保存 |
 | キャッシュからの即時表示 | ✅ | ✅ | 古い可能性を明示 |
 | ノイズキャンセリング・EQ・FW更新・再生 | ❌ | ❌ | 仕様書 §2 で対象外 |
@@ -202,6 +205,8 @@ desktop/                       # Windows
 | [docs/VERIFICATION_ANDROID.md](docs/VERIFICATION_ANDROID.md) | Android 実機検証レポート |
 | [docs/VERIFICATION_A40.md](docs/VERIFICATION_A40.md) | Space A40 実機検証レポート |
 | [docs/MEASUREMENT.md](docs/MEASUREMENT.md) | 操作数・待ち時間・異常系テスト |
+| [docs/PROTECTION_AND_FAVORITES.md](docs/PROTECTION_AND_FAVORITES.md) | 接続先の保護とお気に入り |
+| [docs/QUICK_ACCESS.md](docs/QUICK_ACCESS.md) | クイック設定タイルとシステムトレイ |
 
 開発方針・ブランチ運用・守るべき原則は [AGENTS.md](AGENTS.md) にまとめています。
 

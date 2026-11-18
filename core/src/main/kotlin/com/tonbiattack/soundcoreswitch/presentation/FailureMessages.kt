@@ -1,5 +1,6 @@
 package com.tonbiattack.soundcoreswitch.presentation
 
+import com.tonbiattack.soundcoreswitch.domain.model.DisconnectBlockReason
 import com.tonbiattack.soundcoreswitch.domain.model.FailureReason
 
 /**
@@ -66,6 +67,32 @@ fun FailureReason.toMessage(): FailureMessage = when (this) {
         detail = "指定した接続先がイヤホンに登録されていません。" +
             "接続先一覧を更新してから、もう一度お試しください。",
     )
+
+    // 接続上限に達しているが、安全に切断できる端末が無い。
+    // 誤って必要な端末を切るより、切り替えを中止するほうが安全。
+    is FailureReason.CannotFreeConnectionSlot -> when (val reason = this.reason) {
+        is DisconnectBlockReason.AllProtected -> FailureMessage(
+            title = "切り替えできません",
+            detail = "接続中の端末がすべて保護されています。" +
+                "切り替えるには、保護を解除するか手動で切断してください。",
+        )
+        DisconnectBlockReason.OnlyThisDevice -> FailureMessage(
+            title = "切り替えできません",
+            detail = "この端末しか接続されていません。" +
+                "この端末を切断すると操作できなくなるため、切り替えを中止しました。",
+        )
+        DisconnectBlockReason.CannotIdentifyThisDevice -> FailureMessage(
+            title = "切り替えできません",
+            detail = "どの接続先がこの端末か特定できませんでした。" +
+                "誤って必要な端末を切断しないため、切り替えを中止しました。" +
+                "純正アプリで現在の接続先を確認してください。",
+        )
+        DisconnectBlockReason.NoConnectedTargets -> FailureMessage(
+            title = "切り替えできません",
+            detail = "接続中の端末が見つかりませんでした。" +
+                "イヤホンの接続状態を確認してから、もう一度お試しください。",
+        )
+    }
 
     FailureReason.Unknown -> FailureMessage(
         title = "処理できませんでした",

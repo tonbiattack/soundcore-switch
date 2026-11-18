@@ -8,6 +8,7 @@ import androidx.datastore.preferences.preferencesDataStoreFile
 import com.tonbiattack.soundcoreswitch.domain.adapter.BluetoothAvailabilityChecker
 import com.tonbiattack.soundcoreswitch.domain.adapter.EarbudsScanner
 import com.tonbiattack.soundcoreswitch.domain.adapter.MultipointAdapterRegistry
+import com.tonbiattack.soundcoreswitch.domain.repository.ProtectionCache
 import com.tonbiattack.soundcoreswitch.domain.repository.SettingsRepository
 import com.tonbiattack.soundcoreswitch.domain.repository.TargetCache
 import com.tonbiattack.soundcoreswitch.domain.repository.TargetRepository
@@ -39,6 +40,8 @@ class AppContainer(
     val settings: SettingsRepository,
     val registry: MultipointAdapterRegistry,
     val switchTarget: SwitchTargetUseCase,
+    /** 保護設定のメモリキャッシュ。アダプタが同期的に参照する。 */
+    val protectionCache: ProtectionCache,
 )
 
 /**
@@ -109,9 +112,17 @@ object ServiceLocator {
         val scanner = AndroidEarbudsScanner(appContext, bluetooth)
         val targetCache = DataStoreTargetCache(cacheStore)
         val settings = DataStoreSettingsRepository(settingsStore)
+
+        // 保護設定はアダプタが同期的に参照する必要があるため、
+        // DataStore の内容をメモリにキャッシュし、変更時に更新する。
+        val protectionCache = ProtectionCache(settings)
+
         // 登録されるのは実機検証が完了した機種だけ（DefaultMultipointAdapterRegistry 参照）。
         // RFCOMM 接続に Context を使うため、リークしないよう applicationContext を渡す。
-        val registry = DefaultMultipointAdapterRegistry(appContext)
+        val registry = DefaultMultipointAdapterRegistry(
+            context = appContext,
+            protectionProvider = { protectionCache.current() },
+        )
         val targetRepository = DefaultTargetRepository(registry, targetCache)
 
         appContainer = AppContainer(
@@ -122,6 +133,7 @@ object ServiceLocator {
             settings = settings,
             registry = registry,
             switchTarget = SwitchTargetUseCase(registry, bluetooth),
+            protectionCache = protectionCache,
         )
     }
 
