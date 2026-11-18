@@ -6,6 +6,7 @@ import com.tonbiattack.soundcoreswitch.domain.adapter.EarbudsScanner
 import com.tonbiattack.soundcoreswitch.domain.adapter.ScanResult
 import com.tonbiattack.soundcoreswitch.domain.model.EarbudsDevice
 import com.tonbiattack.soundcoreswitch.domain.model.MultipointTarget
+import com.tonbiattack.soundcoreswitch.domain.model.ProtectionSettings
 import com.tonbiattack.soundcoreswitch.domain.model.SwitchResult
 import com.tonbiattack.soundcoreswitch.domain.model.SwitchUiState
 import com.tonbiattack.soundcoreswitch.domain.model.TargetListResult
@@ -13,6 +14,7 @@ import com.tonbiattack.soundcoreswitch.domain.model.TargetSnapshot
 import com.tonbiattack.soundcoreswitch.domain.model.TargetsUiState
 import com.tonbiattack.soundcoreswitch.domain.repository.SettingsRepository
 import com.tonbiattack.soundcoreswitch.domain.repository.TargetRepository
+import com.tonbiattack.soundcoreswitch.domain.usecase.OrderTargetsUseCase
 import com.tonbiattack.soundcoreswitch.domain.usecase.SwitchTargetUseCase
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
@@ -51,6 +53,9 @@ class AppViewModel(
     private var refreshJob: Job? = null
     private var switchJob: Job? = null
 
+    /** 接続先の並べ替え（お気に入りを先頭に出す）。 */
+    private val orderTargets = OrderTargetsUseCase()
+
     /**
      * 画面表示時に一度だけ呼ぶ。
      *
@@ -59,7 +64,77 @@ class AppViewModel(
      */
     fun start() {
         _state.update { it.copy(bluetooth = bluetooth.check()) }
+        scope.launch { restorePreferences() }
         refresh()
+    }
+
+    /**
+     * 保存済みの設定（お気に入り・保護）を復元する。
+     *
+     * 失敗しても起動を止めない。設定は無くても動作する。
+     */
+    private suspend fun restorePreferences() {
+        val favorites = runCatching { settings.favoriteTargetIds() }.getOrDefault(emptySet())
+        val protection = runCatching { settings.protectionSettings() }
+            .getOrDefault(ProtectionSettings())
+        _state.update {
+            it.copy(
+                favoriteTargetIds = favorites,
+                protectedTargetIds = protection.protectedTargetIds,
+            )
+        }
+    }
+
+    /**
+     * お気に入りを切り替える。
+     *
+     * 表示順に即座に反映し、保存は非同期に行う。
+     */
+    fun toggleFavorite(targetId: String) {
+        val current = _state.value
+        val next = if (targetId in current.favoriteTargetIds) {
+            current.favoriteTargetIds - targetId
+        } else {
+            current.favoriteTargetIds + targetId
+        }
+        _state.update { it.copy(favoriteTargetIds = next) }
+        scope.launch {
+            runCatching { settings.setFavorite(targetId, targetId in next) }
+        }
+        // 並び順を反映するため、表示中の一覧を組み直す。
+        reorderTargets()
+    }
+
+    /**
+     * 保護（自動切断の禁止）を切り替える。
+     *
+     * 保護した端末は、接続上限に達しても自動で切断されない。
+     */
+    fun toggleProtection(targetId: String) {
+        val current = _state.value
+        val next = if (targetId in current.protectedTargetIds) {
+            current.protectedTargetIds - targetId
+        } else {
+            current.protectedTargetIds + targetId
+        }
+        _state.update { it.copy(protectedTargetIds = next) }
+        scope.launch {
+            runCatching {
+                settings.setProtectionSettings(
+                    ProtectionSettings(protectedTargetIds = next),
+                )
+            }
+        }
+    }
+
+    /** 表示中の接続先を、現在のお気に入り設定で並べ直す。 */
+    private fun reorderTargets() {
+        val current = _state.value
+        val ready = current.targets as? TargetsUiState.Ready ?: return
+        val ordered = orderTargets.order(ready.snapshot.targets, current.favoriteTargetIds)
+        _state.update {
+            it.copy(targets = TargetsUiState.Ready(ready.snapshot.copy(targets = ordered)))
+        }
     }
 
     /** 権限要求の結果を受けて状態を更新する。 */
@@ -193,11 +268,16 @@ class AppViewModel(
                 }
                 is TargetListResult.Available -> {
                     if (_state.value.selectedDevice?.address != device.address) return@launch
+                    // お気に入りを先頭に出す。並び順は安定させる（毎回変わらない）。
+                    val ordered = orderTargets.order(
+                        fresh.targets,
+                        _state.value.favoriteTargetIds,
+                    )
                     _state.update {
                         it.copy(
                             targets = TargetsUiState.Ready(
                                 TargetSnapshot(
-                                    targets = fresh.targets,
+                                    targets = ordered,
                                     observedAt = now(),
                                     fromCache = false,
                                 ),

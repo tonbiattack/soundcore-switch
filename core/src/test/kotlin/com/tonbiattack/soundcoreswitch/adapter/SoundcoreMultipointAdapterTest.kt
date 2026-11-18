@@ -187,7 +187,12 @@ class SoundcoreMultipointAdapterTest {
             ),
             disconnectWorks = true,
         )
-        val adapter = SoundcoreMultipointAdapter(transport, maxConnections = 2)
+        // 操作元を特定できる状態にする。特定できないと安全側で中止される。
+        val adapter = SoundcoreMultipointAdapter(
+            transport = transport,
+            maxConnections = 2,
+            thisDeviceIdProvider = { "F0:00:00:00:00:10" },
+        )
 
         adapter.switchTo(device, target(id = "F0:00:00:00:00:30"))
 

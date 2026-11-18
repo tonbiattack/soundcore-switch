@@ -10,6 +10,7 @@ import com.tonbiattack.soundcoreswitch.domain.model.ConnectionStatus
 import com.tonbiattack.soundcoreswitch.domain.model.EarbudsDevice
 import com.tonbiattack.soundcoreswitch.domain.model.EarbudsModel
 import com.tonbiattack.soundcoreswitch.domain.model.MultipointTarget
+import com.tonbiattack.soundcoreswitch.domain.model.ProtectionSettings
 import com.tonbiattack.soundcoreswitch.domain.model.SupportLevel
 import com.tonbiattack.soundcoreswitch.domain.model.SwitchResult
 import com.tonbiattack.soundcoreswitch.domain.model.TargetListResult
@@ -108,11 +109,25 @@ class InMemoryTargetCache : TargetCache {
 /** メモリ上の設定。 */
 class InMemorySettings(
     private var address: String? = null,
+    private var favorites: Set<String> = emptySet(),
+    private var protection: ProtectionSettings = ProtectionSettings(),
 ) : SettingsRepository {
     override suspend fun lastSelectedAddress(): String? = address
 
     override suspend fun setLastSelectedAddress(address: String) {
         this.address = address
+    }
+
+    override suspend fun favoriteTargetIds(): Set<String> = favorites
+
+    override suspend fun setFavorite(targetId: String, favorite: Boolean) {
+        favorites = if (favorite) favorites + targetId else favorites - targetId
+    }
+
+    override suspend fun protectionSettings(): ProtectionSettings = protection
+
+    override suspend fun setProtectionSettings(settings: ProtectionSettings) {
+        protection = settings
     }
 }
 

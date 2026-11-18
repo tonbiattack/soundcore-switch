@@ -18,6 +18,8 @@ import com.tonbiattack.soundcoreswitch.domain.model.TargetsUiState
  * @property targets 接続先一覧の状態。キャッシュ由来かどうかは snapshot が持つ。
  * @property switch 切り替え操作の進行状態。
  * @property isRefreshing バックグラウンド更新中かどうか。UI は控えめに示す。
+ * @property favoriteTargetIds お気に入りの接続先 ID（MAC）。一覧の先頭に表示する。
+ * @property protectedTargetIds 保護された接続先 ID（MAC）。自動切断の対象にしない。
  */
 data class AppUiState(
     val bluetooth: BluetoothAvailability = BluetoothAvailability.Ready,
@@ -26,6 +28,8 @@ data class AppUiState(
     val targets: TargetsUiState = TargetsUiState.Loading,
     val switch: SwitchUiState = SwitchUiState.Idle,
     val isRefreshing: Boolean = false,
+    val favoriteTargetIds: Set<String> = emptySet(),
+    val protectedTargetIds: Set<String> = emptySet(),
 ) {
     /**
      * 切り替え操作を受け付けてよいか。
@@ -48,4 +52,10 @@ data class AppUiState(
     /** 接続先一覧を表示できる状態か。 */
     val hasTargets: Boolean
         get() = targets is TargetsUiState.Ready
+
+    /** お気に入りか。 */
+    fun isFavorite(targetId: String): Boolean = targetId in favoriteTargetIds
+
+    /** 保護対象か。 */
+    fun isProtected(targetId: String): Boolean = targetId in protectedTargetIds
 }

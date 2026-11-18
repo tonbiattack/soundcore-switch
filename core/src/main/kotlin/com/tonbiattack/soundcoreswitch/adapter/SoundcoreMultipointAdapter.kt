@@ -2,12 +2,15 @@ package com.tonbiattack.soundcoreswitch.adapter
 
 import com.tonbiattack.soundcoreswitch.domain.adapter.MultipointAdapter
 import com.tonbiattack.soundcoreswitch.domain.model.ConnectionStatus
+import com.tonbiattack.soundcoreswitch.domain.model.DisconnectBlockReason
 import com.tonbiattack.soundcoreswitch.domain.model.EarbudsDevice
 import com.tonbiattack.soundcoreswitch.domain.model.FailureReason
 import com.tonbiattack.soundcoreswitch.domain.model.MultipointTarget
+import com.tonbiattack.soundcoreswitch.domain.model.ProtectionSettings
 import com.tonbiattack.soundcoreswitch.domain.model.SwitchResult
 import com.tonbiattack.soundcoreswitch.domain.model.TargetKind
 import com.tonbiattack.soundcoreswitch.domain.model.TargetListResult
+import com.tonbiattack.soundcoreswitch.domain.usecase.SelectDisconnectCandidateUseCase
 import com.tonbiattack.soundcoreswitch.protocol.RawDevice
 import com.tonbiattack.soundcoreswitch.protocol.SoundcoreProtocol
 import com.tonbiattack.soundcoreswitch.protocol.SoundcoreTransport
@@ -52,16 +55,20 @@ class SoundcoreMultipointAdapter(
     /** 確認が取れないときに再試行する間隔。 */
     private val confirmRetryIntervalMillis: Long = 1_500,
     /**
-     * 操作元（この端末）の Bluetooth 名を返す。
+     * 操作元（この端末）の接続先 ID（MAC）を返す。
      *
      * 接続上限に達したとき、この端末自身を切断しないために使う。
-     * プロトコルは「どの接続先が操作元か」を返さないため、名前の照合に頼る。
-     * 取得できなければ null を返してよい（その場合も結果は状態の再取得で確認する）。
+     * **名前ではなく ID で判定する**（端末名は変更でき、同名もあり得るため）。
+     * 特定できなければ null。その場合の挙動は [ProtectionSettings] に従う。
      */
-    private val localNameProvider: () -> String? = { null },
+    private val thisDeviceIdProvider: () -> String? = { null },
+    /** 保護設定の供給元。切断してよい端末を制限する。 */
+    private val protectionProvider: () -> ProtectionSettings = { ProtectionSettings() },
     /** 診断用のログ出力。既定は何もしない（`:core` は Android に依存しないため）。 */
     private val logger: (String) -> Unit = {},
 ) : MultipointAdapter {
+
+    private val selectCandidate = SelectDisconnectCandidateUseCase()
 
     override suspend fun readTargets(device: EarbudsDevice): TargetListResult {
         val modelCode = SoundcoreUuids.modelCodeOf(device.model.id)
@@ -90,8 +97,10 @@ class SoundcoreMultipointAdapter(
         val modelCode = SoundcoreUuids.modelCodeOf(device.model.id)
             ?: return SwitchResult.Failed(FailureReason.UnsupportedModel)
 
-        // 操作元（この端末）の Bluetooth 名。切断対象から除外するために使う。
-        val localName = runCatching { localDeviceName() }.getOrNull()
+        // 操作元（この端末）の接続先 ID。切断対象から除外するために使う。
+        // 名前ではなく ID（MAC）で判定する。端末名は変更でき、同名もあり得るため。
+        val thisDeviceId = runCatching { thisDeviceIdProvider() }.getOrNull()
+        val protection = runCatching { protectionProvider() }.getOrDefault(ProtectionSettings())
 
         return try {
             val before = fetchDevices(device.address, modelCode)
@@ -107,21 +116,30 @@ class SoundcoreMultipointAdapter(
 
             // 接続上限に達しているなら、先に1台を切断する。
             // これをしないと接続コマンドが無視される（実機で確認済み）。
-            val connected = before.filter { it.connected }
+            val connected = before.filter { it.connected }.map { it.toTarget() }
             if (connected.size >= maxConnections) {
-                // この端末自身（＝操作元）は切らない。切ると通信が途切れて切り替えが成立しない。
-                val candidates = orderDisconnectCandidates(connected, localName)
-                logger("切断候補=${candidates.map { it.name }} 操作元名=$localName")
+                val selection = selectCandidate.select(connected, protection, thisDeviceId)
+                logger(
+                    "切断候補=${selection.candidates.map { it.displayName }} " +
+                        "操作元ID=$thisDeviceId 保護=${protection.protectedTargetIds.size}件",
+                )
+
+                if (!selection.hasCandidates) {
+                    // 安全に切断できる端末が無い。誤切断を避けて中止する。
+                    val reason = selection.blockReason ?: DisconnectBlockReason.NoConnectedTargets
+                    logger("切断候補を選べないため中止する: $reason")
+                    return SwitchResult.Failed(FailureReason.CannotFreeConnectionSlot(reason))
+                }
 
                 // 切断は対象によって拒否されることがある（実機で確認）。
                 // 拒否された場合は次の候補を試す。1台も切れなければ失敗として返す。
                 var freed = false
-                for (victim in candidates) {
+                for (victim in selection.candidates) {
                     sendCommand(
                         mac = device.address,
                         modelCode = modelCode,
                         command = SoundcoreProtocol.Cmd.DISCONNECT_DEVICE,
-                        body = SoundcoreProtocol.parseMac(victim.mac),
+                        body = SoundcoreProtocol.parseMac(victim.id),
                     )
                     delay(disconnectSettleMillis)
 
@@ -129,9 +147,9 @@ class SoundcoreMultipointAdapter(
                     // 応答の有無では判定できない（応答なしで成功する場合がある）。
                     val afterDisconnect = fetchDevices(device.address, modelCode)
                     val stillConnected = afterDisconnect
-                        ?.firstOrNull { it.mac.equals(victim.mac, ignoreCase = true) }
+                        ?.firstOrNull { it.mac.equals(victim.id, ignoreCase = true) }
                         ?.connected
-                    logger("切断確認 ${victim.name}: まだ接続中=$stillConnected")
+                    logger("切断確認 ${victim.displayName}: まだ接続中=$stillConnected")
                     if (stillConnected == false) {
                         freed = true
                         break
@@ -188,38 +206,6 @@ class SoundcoreMultipointAdapter(
             SwitchResult.Failed(FailureReason.Unknown)
         }
     }
-
-    /**
-     * 切断を試みる順に端末を並べる。
-     *
-     * **操作元（この端末）を切ってはいけない。** 切ると通信が途切れ、
-     * 続く接続コマンドが届かず切り替えが成立しない（実機で確認）。
-     *
-     * 操作元の判定は名前の照合で行う。プロトコルは「どの接続先が操作元か」を
-     * 返さないため、これが唯一の手掛かりである。
-     *
-     * 切断は対象によって拒否されることがあるため（実機で確認）、
-     * 1台に決め打ちせず候補を順に返す。呼び出し側は先頭から試す。
-     *
-     * @param connected 現在接続中の端末。
-     * @param localName 操作元の Bluetooth 名。取得できなければ null。
-     */
-    private fun orderDisconnectCandidates(
-        connected: List<RawDevice>,
-        localName: String?,
-    ): List<RawDevice> {
-        if (localName != null) {
-            val normalized = localName.trim().lowercase()
-            val notLocal = connected.filter { it.name.trim().lowercase() != normalized }
-            // 操作元以外が残っていれば、その中だけを候補にする。
-            if (notLocal.isNotEmpty()) return notLocal
-        }
-        // 名前で判別できない場合は、名前から PC らしいものを先に試す。
-        return connected.sortedBy { if (it.isLikelyThisDevice()) 1 else 0 }
-    }
-
-    /** 操作元（この端末）の Bluetooth 名。 */
-    private fun localDeviceName(): String? = localNameProvider()
 
     /**
      * 接続先一覧を取得する。分割パケットをすべて集める。
@@ -323,15 +309,4 @@ internal fun guessKind(name: String): TargetKind {
             lower.contains("pixel") || lower.contains("galaxy") -> TargetKind.PHONE
         else -> TargetKind.UNKNOWN
     }
-}
-
-/**
- * この端末自身らしいか。
- *
- * プロトコルは「どの接続先が操作元か」を返さないため、名前から推定するしかない。
- * 誤判定を避けるため、切断対象の選択にだけ使い、UI には出さない。
- */
-internal fun RawDevice.isLikelyThisDevice(): Boolean {
-    val lower = name.lowercase()
-    return lower.contains("desktop") || lower.contains("pc") || lower.contains("windows")
 }

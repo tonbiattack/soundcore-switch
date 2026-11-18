@@ -32,6 +32,14 @@ sealed interface FailureReason {
     /** 指定した接続先がイヤホン側に存在しない。 */
     data object TargetNotFound : FailureReason
 
+    /**
+     * 接続上限に達しているが、切断してよい端末が無い。
+     *
+     * 保護設定や操作元の特定失敗により、安全に切断できない状態。
+     * 誤切断を避けるため、切り替えを行わずに失敗として返す。
+     */
+    data class CannotFreeConnectionSlot(val reason: DisconnectBlockReason) : FailureReason
+
     /** 上記以外。詳細はログに残さず、汎用文言を出す。 */
     data object Unknown : FailureReason
 }

@@ -2,6 +2,7 @@ package com.tonbiattack.soundcoreswitch.adapter
 
 import com.tonbiattack.soundcoreswitch.domain.model.ConnectionStatus
 import com.tonbiattack.soundcoreswitch.domain.model.FailureReason
+import com.tonbiattack.soundcoreswitch.domain.model.ProtectionSettings
 import com.tonbiattack.soundcoreswitch.domain.model.SwitchResult
 import com.tonbiattack.soundcoreswitch.domain.model.TargetListResult
 import com.tonbiattack.soundcoreswitch.protocol.SoundcoreProtocol
@@ -121,7 +122,7 @@ class SoundcoreAdapterDeviceRegressionTest {
         )
         val adapter = SoundcoreMultipointAdapter(
             transport = transport,
-            localNameProvider = { "Pixel 9" },
+            thisDeviceIdProvider = { "F0:00:00:00:00:10" },
         )
 
         adapter.switchTo(device, target(id = "F0:00:00:00:00:21"))
@@ -158,7 +159,7 @@ class SoundcoreAdapterDeviceRegressionTest {
         )
         val adapter = SoundcoreMultipointAdapter(
             transport = transport,
-            localNameProvider = { "Pixel 9" },
+            thisDeviceIdProvider = { "F0:00:00:00:00:10" },
         )
 
         val result = adapter.switchTo(device, target(id = "F0:00:00:00:00:21"))
@@ -179,7 +180,7 @@ class SoundcoreAdapterDeviceRegressionTest {
         )
         val adapter = SoundcoreMultipointAdapter(
             transport = transport,
-            localNameProvider = { "Pixel 9" },
+            thisDeviceIdProvider = { "F0:00:00:00:00:10" },
         )
 
         val result = adapter.switchTo(device, target(id = "F0:00:00:00:00:21"))
@@ -188,8 +189,9 @@ class SoundcoreAdapterDeviceRegressionTest {
     }
 
     @Test
-    fun `操作元の名前が取得できなくても切断対象を選べる`() = runTest {
-        // Bluetooth 名が取れない端末でも、処理が止まらないこと。
+    fun `操作元を特定できない場合は誤切断せず中止する`() = runTest {
+        // 操作元の ID が取れない端末では、どの接続先を切ってよいか判断できない。
+        // 誤って必要な端末を切るより、切り替えを中止するほうが安全。
         val transport = SequencedTransport(
             deviceLists = listOf(
                 listOf(
@@ -197,21 +199,68 @@ class SoundcoreAdapterDeviceRegressionTest {
                     Triple("F0:00:00:00:00:20", "DESKTOP-A", true),
                     Triple("F0:00:00:00:00:21", "DESKTOP-B", false),
                 ),
+            ),
+        )
+        val adapter = SoundcoreMultipointAdapter(
+            transport = transport,
+            thisDeviceIdProvider = { null },
+        )
+
+        val result = adapter.switchTo(device, target(id = "F0:00:00:00:00:21"))
+
+        assertTrue(result is SwitchResult.Failed)
+        val reason = (result as SwitchResult.Failed).reason
+        assertTrue(
+            "切断候補を選べない理由が返ること: $reason",
+            reason is FailureReason.CannotFreeConnectionSlot,
+        )
+        // 切断コマンドを送っていないこと（誤切断の防止）。
+        val disconnectCommand =
+            ((SoundcoreProtocol.Cmd.DISCONNECT_DEVICE[0].toInt() and 0xFF) shl 8) or
+                (SoundcoreProtocol.Cmd.DISCONNECT_DEVICE[1].toInt() and 0xFF)
+        assertTrue(
+            "操作元が不明なのに切断コマンドを送っている",
+            disconnectCommand !in transport.sentCommands,
+        )
+    }
+
+    @Test
+    fun `保護された端末は切断せず中止する`() = runTest {
+        // 接続中の2台が両方保護されている場合、どちらも切れない。
+        val transport = SequencedTransport(
+            deviceLists = listOf(
                 listOf(
                     Triple("F0:00:00:00:00:10", "Pixel 9", true),
-                    Triple("F0:00:00:00:00:20", "DESKTOP-A", false),
-                    Triple("F0:00:00:00:00:21", "DESKTOP-B", true),
+                    Triple("F0:00:00:00:00:20", "DESKTOP-A", true),
+                    Triple("F0:00:00:00:00:21", "DESKTOP-B", false),
                 ),
             ),
         )
         val adapter = SoundcoreMultipointAdapter(
             transport = transport,
-            localNameProvider = { null },
+            thisDeviceIdProvider = { "F0:00:00:00:00:10" },
+            protectionProvider = {
+                ProtectionSettings(
+                    protectedTargetIds = setOf("F0:00:00:00:00:20"),
+                )
+            },
         )
 
         val result = adapter.switchTo(device, target(id = "F0:00:00:00:00:21"))
 
-        assertTrue(result is SwitchResult.Confirmed)
+        assertTrue(result is SwitchResult.Failed)
+        val reason = (result as SwitchResult.Failed).reason
+        assertTrue(
+            "保護により切断できない理由が返ること: $reason",
+            reason is FailureReason.CannotFreeConnectionSlot,
+        )
+        val disconnectCommand =
+            ((SoundcoreProtocol.Cmd.DISCONNECT_DEVICE[0].toInt() and 0xFF) shl 8) or
+                (SoundcoreProtocol.Cmd.DISCONNECT_DEVICE[1].toInt() and 0xFF)
+        assertTrue(
+            "保護対象に切断コマンドを送っている",
+            disconnectCommand !in transport.sentCommands,
+        )
     }
 
     @Test
@@ -251,7 +300,7 @@ class SoundcoreAdapterDeviceRegressionTest {
         )
         val adapter = SoundcoreMultipointAdapter(
             transport = transport,
-            localNameProvider = { "Pixel 9" },
+            thisDeviceIdProvider = { "F0:00:00:00:00:10" },
         )
 
         val result = adapter.switchTo(device, target(id = "F0:00:00:00:00:21"))
@@ -275,7 +324,7 @@ class SoundcoreAdapterDeviceRegressionTest {
         )
         val adapter = SoundcoreMultipointAdapter(
             transport = transport,
-            localNameProvider = { "Pixel 9" },
+            thisDeviceIdProvider = { "F0:00:00:00:00:10" },
         )
 
         adapter.switchTo(device, target(id = "F0:00:00:00:00:21"))
