@@ -12,12 +12,11 @@ import androidx.compose.ui.window.rememberTrayState
 import com.tonbiattack.soundcoreswitch.desktop.platform.DesktopContainer
 import com.tonbiattack.soundcoreswitch.domain.model.ConnectionStatus
 import com.tonbiattack.soundcoreswitch.domain.model.MultipointTarget
-import com.tonbiattack.soundcoreswitch.domain.model.SwitchResult
 import com.tonbiattack.soundcoreswitch.domain.model.SwitchUiState
 import com.tonbiattack.soundcoreswitch.domain.model.TargetsUiState
 import com.tonbiattack.soundcoreswitch.presentation.AppUiState
+import com.tonbiattack.soundcoreswitch.presentation.AppViewModel
 import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.launch
 import javax.imageio.ImageIO
 
 /**
@@ -31,6 +30,7 @@ import javax.imageio.ImageIO
  *
  * @param container 依存のまとまり。
  * @param scope アプリのスコープ。
+ * @param viewModel 画面と共有する ViewModel。切り替えはここを通す。
  * @param state 現在の画面状態（ViewModel と共有）。
  * @param onShowWindow メインウィンドウを表示する。
  * @param onExit アプリを終了する。
@@ -39,6 +39,7 @@ import javax.imageio.ImageIO
 fun ApplicationScope.AppTray(
     container: DesktopContainer,
     scope: CoroutineScope,
+    viewModel: AppViewModel,
     state: AppUiState,
     onShowWindow: () -> Unit,
     onExit: () -> Unit,
@@ -65,7 +66,7 @@ fun ApplicationScope.AppTray(
                     connected.forEach { target ->
                         Item(
                             text = "  ${target.displayName}",
-                            onClick = { switchFromTray(container, scope, target) { lastResult = it } },
+                            onClick = { switchFromTray(viewModel, target) { lastResult = it } },
                             enabled = state.canSwitch,
                         )
                     }
@@ -76,7 +77,7 @@ fun ApplicationScope.AppTray(
                     others.forEach { target ->
                         Item(
                             text = "  ${target.displayName}",
-                            onClick = { switchFromTray(container, scope, target) { lastResult = it } },
+                            onClick = { switchFromTray(viewModel, target) { lastResult = it } },
                             enabled = state.canSwitch,
                         )
                     }
@@ -84,7 +85,7 @@ fun ApplicationScope.AppTray(
             }
 
             Separator()
-            Item("更新", onClick = { container.refreshFromTray(scope) })
+            Item("更新", onClick = { viewModel.refresh() })
             Item("画面を開く", onClick = onShowWindow)
             Separator()
             Item("終了", onClick = onExit)
@@ -95,27 +96,17 @@ fun ApplicationScope.AppTray(
 /**
  * トレイから切り替える。
  *
- * 画面と同じユースケースを通すため、成功の判定は状態の再取得で行われる。
+ * **画面と同じ ViewModel を通す。** 直接ユースケースを呼ぶと、
+ * 二重送信の防止（`canSwitch`）と状態の反映が効かず、
+ * 画面とトレイから同時に操作したときに切り替えが競合する。
  */
 private fun switchFromTray(
-    container: DesktopContainer,
-    scope: CoroutineScope,
+    viewModel: AppViewModel,
     target: MultipointTarget,
     onResult: (String) -> Unit,
 ) {
-    scope.launch {
-        val device = container.currentDevice() ?: run {
-            onResult("イヤホンが選択されていません")
-            return@launch
-        }
-        val result = container.switchTarget.execute(device, target)
-        onResult(
-            when (result) {
-                is SwitchResult.Confirmed -> "${result.target.displayName} に切り替えました"
-                is SwitchResult.Failed -> "切り替えできませんでした"
-            },
-        )
-    }
+    viewModel.switchTo(target)
+    onResult("${target.displayName} に切り替えています")
 }
 
 /** トレイのアイコン。読み込めなければ単色の四角で代替する（起動を止めない）。 */

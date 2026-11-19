@@ -50,6 +50,14 @@ class SoundcoreMultipointAdapter(
      * 実機（Liberty 4 NC）で調整した値。
      */
     private val disconnectSettleMillis: Long = 1_500,
+    /**
+     * 切断が反映されないときに再確認する間隔。
+     *
+     * イヤホンが切断処理を終えて一覧に反映するまで時間がかかる。
+     * 1回の確認で諦めると、実際には切れているのに「切断できなかった」と
+     * 誤判定して切り替えが不安定になる。
+     */
+    private val disconnectRetryIntervalMillis: Long = 1_000,
     /** 接続コマンド送信後、最初に状態を確認するまでの待ち時間。 */
     private val confirmInitialDelayMillis: Long = 1_500,
     /** 確認が取れないときに再試行する間隔。 */
@@ -141,16 +149,15 @@ class SoundcoreMultipointAdapter(
                         command = SoundcoreProtocol.Cmd.DISCONNECT_DEVICE,
                         body = SoundcoreProtocol.parseMac(victim.id),
                     )
-                    delay(disconnectSettleMillis)
 
                     // 実際に切断されたかを一覧の再取得で確認する。
                     // 応答の有無では判定できない（応答なしで成功する場合がある）。
-                    val afterDisconnect = fetchDevices(device.address, modelCode)
-                    val stillConnected = afterDisconnect
-                        ?.firstOrNull { it.mac.equals(victim.id, ignoreCase = true) }
-                        ?.connected
-                    logger("切断確認 ${victim.displayName}: まだ接続中=$stillConnected")
-                    if (stillConnected == false) {
+                    //
+                    // **1回の確認では足りない。** イヤホンが切断処理を終えて一覧に
+                    // 反映するまで時間がかかるため、1回だけ見て「切断できなかった」と
+                    // 判定すると、実際には切れているのに次の候補へ進んでしまう
+                    // （実機で切り替えが不安定になる原因）。
+                    if (awaitDisconnected(device.address, modelCode, victim.id)) {
                         freed = true
                         break
                     }
@@ -264,6 +271,41 @@ class SoundcoreMultipointAdapter(
         }
     }
 
+    /**
+     * 指定した接続先が実際に切断されるまで待つ。
+     *
+     * イヤホンは切断要求を受けてから一覧に反映するまで時間がかかる。
+     * 1回だけ確認すると、まだ反映されていない瞬間を見て「切断できなかった」と
+     * 誤判定し、無駄に次の候補へ進んでしまう（切り替えが不安定になる原因）。
+     *
+     * 一覧の取得自体に失敗した場合は、判断できないため「まだ接続中」として扱う
+     * （切断できたと誤認して接続に進むより安全）。
+     *
+     * @return 切断を確認できたら true。
+     */
+    private suspend fun awaitDisconnected(
+        mac: String,
+        modelCode: String,
+        targetId: String,
+    ): Boolean {
+        for (attempt in 0 until DISCONNECT_CONFIRM_ATTEMPTS) {
+            delay(
+                if (attempt == 0) disconnectSettleMillis else disconnectRetryIntervalMillis,
+            )
+            val current = fetchDevices(mac, modelCode)
+            if (current == null) {
+                logger("切断確認${attempt + 1}回目: 一覧を取得できないため継続する")
+                continue
+            }
+            val stillConnected = current
+                .firstOrNull { it.mac.equals(targetId, ignoreCase = true) }
+                ?.connected
+            logger("切断確認${attempt + 1}回目: まだ接続中=$stillConnected")
+            if (stillConnected == false) return true
+        }
+        return false
+    }
+
     companion object {
         /** Liberty 4 NC (A3947) の機種 ID。 */
         const val MODEL_ID = "liberty-4-nc"
@@ -276,8 +318,20 @@ class SoundcoreMultipointAdapter(
          *
          * イヤホンが接続を確立するまで数秒かかるため、1回の確認では
          * 反映前の状態を見て「失敗」と誤判定し得る。
+         *
+         * 待ち時間は 1.5 秒 + 1.5 秒 × 5 = 最大 9 秒。
+         * 実機（Space A40）では接続の反映に 5 秒近くかかることがあり、
+         * 4回では足りずに失敗と誤判定していた。
          */
-        const val CONFIRM_ATTEMPTS = 4
+        const val CONFIRM_ATTEMPTS = 6
+
+        /**
+         * 切断を確認する回数。
+         *
+         * 切断の反映には時間がかかる。1回で諦めると誤判定するため複数回見る。
+         * 待ち時間は 1.5 秒 + 1.0 秒 × 3 = 最大 4.5 秒。
+         */
+        const val DISCONNECT_CONFIRM_ATTEMPTS = 4
     }
 }
 
