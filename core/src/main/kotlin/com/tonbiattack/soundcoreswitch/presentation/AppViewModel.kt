@@ -12,6 +12,7 @@ import com.tonbiattack.soundcoreswitch.domain.model.SwitchUiState
 import com.tonbiattack.soundcoreswitch.domain.model.TargetListResult
 import com.tonbiattack.soundcoreswitch.domain.model.TargetSnapshot
 import com.tonbiattack.soundcoreswitch.domain.model.TargetsUiState
+import com.tonbiattack.soundcoreswitch.domain.repository.ProtectionCache
 import com.tonbiattack.soundcoreswitch.domain.repository.SettingsRepository
 import com.tonbiattack.soundcoreswitch.domain.repository.TargetRepository
 import com.tonbiattack.soundcoreswitch.domain.usecase.OrderTargetsUseCase
@@ -46,6 +47,14 @@ class AppViewModel(
     private val bluetooth: BluetoothAvailabilityChecker,
     private val scope: CoroutineScope,
     private val now: () -> Long = System::currentTimeMillis,
+    /**
+     * 保護設定のメモリキャッシュ。
+     *
+     * アダプタは切断候補を選ぶ時点で保護設定を**同期的に**参照する。
+     * そのため、ここでの変更をキャッシュにも反映しないと、
+     * 画面で保護してもアダプタには伝わらず保護が効かない。
+     */
+    private val protectionCache: ProtectionCache? = null,
 ) {
     private val _state = MutableStateFlow(AppUiState())
     val state: StateFlow<AppUiState> = _state.asStateFlow()
@@ -53,18 +62,28 @@ class AppViewModel(
     private var refreshJob: Job? = null
     private var switchJob: Job? = null
 
+    /** 設定を復元済みか。画面復帰のたびに復元し直さないためのフラグ。 */
+    private var preferencesRestored = false
+
     /** 接続先の並べ替え（お気に入りを先頭に出す）。 */
     private val orderTargets = OrderTargetsUseCase()
 
     /**
-     * 画面表示時に一度だけ呼ぶ。
+     * 画面表示時に呼ぶ。
      *
      * Bluetooth の状態を確認してから、検出と接続先の読み込みを非同期に開始する。
      * UI をブロックしない。
+     *
+     * **画面が前面に戻るたびに呼ばれる。** 設定の復元は初回だけ行い、
+     * 2回目以降は状態の取り直しだけにする（毎回復元すると、
+     * 画面で変更した内容が保存前の値に戻る恐れがある）。
      */
     fun start() {
         _state.update { it.copy(bluetooth = bluetooth.check()) }
-        scope.launch { restorePreferences() }
+        if (!preferencesRestored) {
+            preferencesRestored = true
+            scope.launch { restorePreferences() }
+        }
         refresh()
     }
 
@@ -72,6 +91,9 @@ class AppViewModel(
      * 保存済みの設定（お気に入り・保護）を復元する。
      *
      * 失敗しても起動を止めない。設定は無くても動作する。
+     *
+     * 保護設定は**アダプタが参照するキャッシュにも反映する**。
+     * これを忘れると、再起動後に保護が効かなくなる。
      */
     private suspend fun restorePreferences() {
         val favorites = runCatching { settings.favoriteTargetIds() }.getOrDefault(emptySet())
@@ -83,6 +105,8 @@ class AppViewModel(
                 protectedTargetIds = protection.protectedTargetIds,
             )
         }
+        // アダプタが参照するキャッシュを復元した内容に合わせる。
+        protectionCache?.update(protection)
     }
 
     /**
@@ -109,6 +133,9 @@ class AppViewModel(
      * 保護（自動切断の禁止）を切り替える。
      *
      * 保護した端末は、接続上限に達しても自動で切断されない。
+     *
+     * **キャッシュにも同時に反映する。** アダプタは切断候補を選ぶ時点で
+     * キャッシュを同期的に参照するため、保存だけでは保護が効かない。
      */
     fun toggleProtection(targetId: String) {
         val current = _state.value
@@ -118,12 +145,12 @@ class AppViewModel(
             current.protectedTargetIds + targetId
         }
         _state.update { it.copy(protectedTargetIds = next) }
+
+        val settingsValue = ProtectionSettings(protectedTargetIds = next)
+        // アダプタが参照するキャッシュを先に更新する（保存の完了を待たない）。
+        protectionCache?.update(settingsValue)
         scope.launch {
-            runCatching {
-                settings.setProtectionSettings(
-                    ProtectionSettings(protectedTargetIds = next),
-                )
-            }
+            runCatching { settings.setProtectionSettings(settingsValue) }
         }
     }
 

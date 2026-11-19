@@ -7,7 +7,10 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.lifecycle.repeatOnLifecycle
 import com.tonbiattack.soundcoreswitch.presentation.AppViewModel
 
 /**
@@ -32,7 +35,18 @@ fun AppRoute(viewModel: AppViewModel) {
         viewModel.onPermissionResult(granted)
     }
 
-    LaunchedEffect(Unit) { viewModel.start() }
+    val lifecycleOwner = LocalLifecycleOwner.current
+
+    // 画面が前面に戻るたびに状態を取り直す。
+    //
+    // LaunchedEffect(Unit) だけだと初回しか実行されず、バックグラウンドから
+    // 戻ったときに古い一覧が残る（実機で「最新が反映されない」と見える原因）。
+    // 純正アプリで接続先を変えた場合も、戻った時点で追従できる。
+    LaunchedEffect(lifecycleOwner) {
+        lifecycleOwner.lifecycle.repeatOnLifecycle(Lifecycle.State.RESUMED) {
+            viewModel.start()
+        }
+    }
 
     AppScreen(
         state = state,
