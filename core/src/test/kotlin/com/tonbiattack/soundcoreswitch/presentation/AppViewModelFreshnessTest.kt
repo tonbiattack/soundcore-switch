@@ -305,4 +305,71 @@ class AppViewModelFreshnessTest {
             viewModel.state.value.protectedTargetIds.contains(targetA.id),
         )
     }
+
+    @Test
+    fun `接続中の端末が一覧の先頭に表示される`() = runTest {
+        // 接続中を最初に見せたい。お気に入りより優先する。
+        val disconnectedA = targetA.copy(status = ConnectionStatus.DISCONNECTED)
+        val connectedB = targetB.copy(status = ConnectionStatus.CONNECTED)
+        val repository = FakeTargetRepository(
+            fetchResult = TargetListResult.Available(listOf(disconnectedA, connectedB)),
+        )
+        val (viewModel, _, _) = harness(this, repository = repository)
+
+        viewModel.start()
+        advanceUntilIdle()
+
+        val ready = viewModel.state.value.targets as TargetsUiState.Ready
+        assertEquals(
+            "接続中の端末が先頭であること",
+            connectedB.id,
+            ready.snapshot.targets.first().id,
+        )
+    }
+
+    @Test
+    fun `切り替え後は新しい接続先が先頭に表示される`() = runTest {
+        // 切り替えると接続中が入れ替わる。並び順もそれに追従すること。
+        val before = listOf(
+            targetA.copy(status = ConnectionStatus.CONNECTED),
+            targetB.copy(status = ConnectionStatus.DISCONNECTED),
+        )
+        val after = listOf(
+            targetA.copy(status = ConnectionStatus.DISCONNECTED),
+            targetB.copy(status = ConnectionStatus.CONNECTED),
+        )
+        val adapter = FakeMultipointAdapter(
+            modelId = modelId,
+            targets = TargetListResult.Available(before),
+            switchResult = SwitchResult.Confirmed(targetB.copy(status = ConnectionStatus.CONNECTED)),
+            targetsAfterSwitch = TargetListResult.Available(after),
+        )
+        val repository = AdapterBackedRepository(adapter)
+        val scanner = FakeScanner(ScanResult.Found(listOf(device)))
+        val checker = FakeBluetoothChecker(BluetoothAvailability.Ready)
+        val viewModel = AppViewModel(
+            scanner = scanner,
+            targetRepository = repository,
+            settings = InMemorySettings(),
+            switchTarget = SwitchTargetUseCase(
+                registry = FakeRegistry(mapOf(modelId to adapter)),
+                bluetooth = checker,
+            ),
+            bluetooth = checker,
+            scope = this,
+            now = { 1_000L },
+        )
+
+        viewModel.start()
+        advanceUntilIdle()
+        viewModel.switchTo(targetB)
+        advanceUntilIdle()
+
+        val ready = viewModel.state.value.targets as TargetsUiState.Ready
+        assertEquals(
+            "切り替え後は新しい接続先が先頭であること",
+            targetB.id,
+            ready.snapshot.targets.first().id,
+        )
+    }
 }
