@@ -60,11 +60,21 @@ class FakeMultipointAdapter(
     ),
     var targetsAfterSwitch: TargetListResult? = null,
     var throwOnSwitch: Boolean = false,
+    /**
+     * 保護設定の供給元。
+     *
+     * 実装（SoundcoreMultipointAdapter）と同じく、切断候補を選ぶ時点で
+     * 同期的に参照する。ViewModel の変更がここに伝わることを検証できる。
+     */
+    private val protectionProvider: () -> ProtectionSettings = { ProtectionSettings() },
 ) : MultipointAdapter {
     var switchCalls: Int = 0
         private set
     var readCalls: Int = 0
         private set
+
+    /** 現在の保護設定。テストから検証するために公開する。 */
+    fun protectedTargetIds(): Set<String> = protectionProvider().protectedTargetIds
 
     override suspend fun readTargets(device: EarbudsDevice): TargetListResult {
         readCalls++

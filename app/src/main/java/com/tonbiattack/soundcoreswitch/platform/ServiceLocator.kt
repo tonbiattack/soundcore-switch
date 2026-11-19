@@ -151,6 +151,8 @@ object ServiceLocator {
             switchTarget = dependencies.switchTarget,
             bluetooth = dependencies.bluetooth,
             scope = scope,
+            // 保護設定はアダプタが同期的に参照するため、同じキャッシュを共有する。
+            protectionCache = dependencies.protectionCache,
         )
     }
 
