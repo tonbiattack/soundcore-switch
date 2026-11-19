@@ -29,6 +29,7 @@ Soundcore Switch の設計・調査・検証の記録。
 | [MEASUREMENT.md](./MEASUREMENT.md) | 計測値・異常系テスト・ログの安全性 | 計測したとき |
 | [PROTECTION_AND_FAVORITES.md](./PROTECTION_AND_FAVORITES.md) | 接続先の保護とお気に入り（誤切断の防止） | 保護・お気に入りを変えるとき |
 | [FRESHNESS_INVESTIGATION.md](./FRESHNESS_INVESTIGATION.md) | 「最新が反映されない」不具合の調査記録 | 状態更新の経路を変えるとき |
+| [SWITCH_STABILITY.md](./SWITCH_STABILITY.md) | 切り替えが不安定な問題の調査記録 | 待ち時間・再試行を変えるとき |
 | [QUICK_ACCESS.md](./QUICK_ACCESS.md) | クイック設定タイルとシステムトレイ | 常駐機能を変えるとき |
 | [DEVICE_WARDEN.md](./DEVICE_WARDEN.md) | 実機のリース運用（heartbeat の落とし穴） | 実機運用を変えるとき |
 

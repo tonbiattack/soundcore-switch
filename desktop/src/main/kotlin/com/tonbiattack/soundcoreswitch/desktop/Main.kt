@@ -56,6 +56,7 @@ fun main() = application {
     AppTray(
         container = container,
         scope = scope,
+        viewModel = viewModel,
         state = state,
         onShowWindow = { windowVisible = true },
         onExit = {
