@@ -119,6 +119,8 @@ class DesktopContainer {
             switchTarget = switchTarget,
             bluetooth = bluetooth,
             scope = scope,
+            // 保護設定はアダプタが同期的に参照するため、同じキャッシュを共有する。
+            protectionCache = protectionCache,
         )
         activeViewModel = viewModel
         return viewModel
