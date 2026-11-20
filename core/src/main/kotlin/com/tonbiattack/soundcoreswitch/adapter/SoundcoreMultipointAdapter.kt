@@ -66,6 +66,14 @@ class SoundcoreMultipointAdapter(
     /** 確認が取れないときに再試行する間隔。 */
     private val confirmRetryIntervalMillis: Long = 1_500,
     /**
+     * 切り替え成立後、次のコマンドを受け付けるまで待つ時間。
+     *
+     * イヤホンは切り替え処理を終えるまで次のコマンドを受け付けない。
+     * 待たずに連続で切り替えると「応答がありませんでした」になる（実機で確認）。
+     * 体感を損なわない範囲で、確実に処理が終わる長さにする。
+     */
+    private val switchSettleMillis: Long = 1_000,
+    /**
      * 操作元（この端末）の接続先 ID（MAC）を返す。
      *
      * 接続上限に達したとき、この端末自身を切断しないために使う。
@@ -245,6 +253,10 @@ class SoundcoreMultipointAdapter(
                 ?: return SwitchResult.Failed(FailureReason.TargetNotFound)
 
             if (finalTarget.connected) {
+                // 切り替えが成立した。イヤホンが次のコマンドを受け付けられるように
+                // なるまで待つ。待たずに連続で切り替えると、前の処理が終わっておらず
+                // 「応答がありませんでした」になる（実機で確認）。
+                delay(switchSettleMillis)
                 SwitchResult.Confirmed(finalTarget.toTarget())
             } else {
                 SwitchResult.Failed(FailureReason.SwitchUnconfirmed)
