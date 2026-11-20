@@ -27,12 +27,14 @@ class SelectDisconnectCandidateUseCase {
      * @param connected 現在接続中の接続先。
      * @param protection 保護設定。
      * @param thisDeviceId 操作元の端末 ID（MAC）。特定できなければ null。
+     * @param thisDeviceName 操作元の端末名。[thisDeviceId] が null のときの代替。
      * @return 候補のリスト。空なら [blockReason] に理由が入る。
      */
     fun select(
         connected: List<MultipointTarget>,
         protection: ProtectionSettings,
         thisDeviceId: String?,
+        thisDeviceName: String? = null,
     ): DisconnectSelection {
         if (connected.isEmpty()) {
             return DisconnectSelection(emptyList(), DisconnectBlockReason.NoConnectedTargets)
@@ -56,7 +58,27 @@ class SelectDisconnectCandidateUseCase {
             return DisconnectSelection(others, null)
         }
 
-        // 操作元を特定できない。安全側に倒すかどうかは設定に従う。
+        // MAC は取れないが名前は分かる場合、名前で照合する。
+        // Android 10 以降はローカル MAC を取得できないため、これが実質的な手段になる。
+        if (thisDeviceName != null) {
+            val normalized = thisDeviceName.trim().lowercase()
+            val others = unprotected.filter { it.displayName.trim().lowercase() != normalized }
+            if (others.isEmpty()) {
+                return DisconnectSelection(emptyList(), DisconnectBlockReason.OnlyThisDevice)
+            }
+            return DisconnectSelection(others, null)
+        }
+
+        // 操作元を特定できない。
+        //
+        // Android 10 以降、アプリからローカル Bluetooth アドレスは取得できない
+        // （`BluetoothAdapter.getAddress()` は `02:00:00:00:00:00` を返す）。
+        // そのため「特定できない＝中止」にすると、Android では切り替えが一切できない。
+        //
+        // 代わりに**接続中の端末を1台ずつ試す**。切断して通信が途切れた場合、
+        // その端末が操作元だったことになる。呼び出し側は切断後の一覧取得が
+        // 失敗したら「操作元を切った」と判断して中止する。
+        // 保護された端末は候補から除外済みなので、誤って保護対象を切ることはない。
         if (protection.neverDisconnectUnknown) {
             return DisconnectSelection(
                 emptyList(),

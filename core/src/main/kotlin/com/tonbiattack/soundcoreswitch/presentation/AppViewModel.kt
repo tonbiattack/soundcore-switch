@@ -65,6 +65,14 @@ class AppViewModel(
     /** 設定を復元済みか。画面復帰のたびに復元し直さないためのフラグ。 */
     private var preferencesRestored = false
 
+    /**
+     * 接続先取得の世代番号。
+     *
+     * 取得を開始するたびに進める。応答が遅い取得が後から完了しても、
+     * 世代が古ければ UI を書き換えない（古い状態で上書きさせない）。
+     */
+    private var targetsGeneration = 0L
+
     /** 接続先の並べ替え（お気に入りを先頭に出す）。 */
     private val orderTargets = OrderTargetsUseCase()
 
@@ -180,6 +188,8 @@ class AppViewModel(
      * 選択を保存し、そのイヤホンの接続先をキャッシュから即表示してから非同期更新する。
      */
     fun selectDevice(device: EarbudsDevice) {
+        // 選択が変わったら、進行中の取得結果はすべて古い。捨てる。
+        targetsGeneration++
         _state.update {
             it.copy(
                 selectedDevice = device,
@@ -271,16 +281,28 @@ class AppViewModel(
      *
      * キャッシュ表示中は [TargetSnapshot.fromCache] が true のままにし、
      * UI が「古い可能性がある」ことを示せるようにする。
+     *
+     * **世代番号で古い結果を捨てる。** この関数は呼び出しごとに独立した
+     * コルーチンを起動するため、応答が遅い取得が後から完了して
+     * 新しい状態を上書きし得る（実機で「切り替えたのに古い一覧に戻る」）。
+     * 開始時点の世代を記録し、最新でなければ UI を書き換えない。
      */
     private fun loadTargets(device: EarbudsDevice) {
+        val generation = ++targetsGeneration
         scope.launch {
             val cached = targetRepository.readCached(device)
-            if (cached != null && _state.value.selectedDevice?.address == device.address) {
+            // キャッシュの即時描画も、より新しい要求が出ていれば捨てる。
+            if (cached != null &&
+                generation == targetsGeneration &&
+                _state.value.selectedDevice?.address == device.address
+            ) {
                 _state.update { it.copy(targets = TargetsUiState.Ready(cached)) }
             }
 
             when (val fresh = targetRepository.fetch(device)) {
                 is TargetListResult.Unavailable -> {
+                    // より新しい取得が始まっていれば、この結果は古い。捨てる。
+                    if (generation != targetsGeneration) return@launch
                     // キャッシュを表示できているなら、それを残したまま失敗を伝える。
                     val shown = _state.value.targets
                     _state.update {
@@ -294,6 +316,7 @@ class AppViewModel(
                     }
                 }
                 is TargetListResult.Available -> {
+                    if (generation != targetsGeneration) return@launch
                     if (_state.value.selectedDevice?.address != device.address) return@launch
                     // お気に入りを先頭に出す。並び順は安定させる（毎回変わらない）。
                     val ordered = orderTargets.order(

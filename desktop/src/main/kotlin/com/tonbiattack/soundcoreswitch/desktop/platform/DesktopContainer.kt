@@ -499,10 +499,13 @@ private class PropertiesSettingsRepository(
                     ?.filter { it.isNotBlank() }
                     ?.toSet()
                     .orEmpty(),
+                // 旧既定値（true）は切り替えを塞ぐため、読み込み時に false へ移行する。
+                // この設定を変更する UI は無いので、保存値は旧既定値と判断できる。
                 neverDisconnectUnknown = properties
                     ?.getProperty(KEY_NEVER_DISCONNECT_UNKNOWN)
                     ?.toBooleanStrictOrNull()
-                    ?: true,
+                    ?.takeIf { properties.getProperty(KEY_PROTECTION_MIGRATED) == "true" }
+                    ?: false,
             )
         } catch (e: CancellationException) {
             throw e
@@ -523,6 +526,8 @@ private class PropertiesSettingsRepository(
                     KEY_NEVER_DISCONNECT_UNKNOWN,
                     settings.neverDisconnectUnknown.toString(),
                 )
+                // 明示的に保存した値は移行済みとして扱う。
+                properties.setProperty(KEY_PROTECTION_MIGRATED, "true")
                 storeProperties(file, properties)
             } catch (e: CancellationException) {
                 throw e
@@ -542,6 +547,9 @@ private class PropertiesSettingsRepository(
 
         /** 操作元を特定できない場合に自動切断を禁止するか。 */
         const val KEY_NEVER_DISCONNECT_UNKNOWN = "never_disconnect_unknown"
+
+        /** 保護設定の移行を完了したか。旧既定値の書き換えを1回だけ行うためのフラグ。 */
+        const val KEY_PROTECTION_MIGRATED = "protection_migrated_v2"
 
         /** 複数 ID の区切り。MAC に現れない文字を使う。 */
         const val SEPARATOR = ","

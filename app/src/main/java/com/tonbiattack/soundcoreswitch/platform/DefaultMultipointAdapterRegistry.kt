@@ -3,6 +3,7 @@ package com.tonbiattack.soundcoreswitch.platform
 import android.annotation.SuppressLint
 import android.bluetooth.BluetoothManager
 import android.content.Context
+import android.provider.Settings
 import android.util.Log
 import com.tonbiattack.soundcoreswitch.adapter.SoundcoreMultipointAdapter
 import com.tonbiattack.soundcoreswitch.domain.adapter.MultipointAdapter
@@ -72,6 +73,8 @@ class DefaultMultipointAdapterRegistry(
             val transport = AndroidSoundcoreTransport(context)
             // 接続上限に達したとき、この端末自身を切断しないために ID を渡す。
             val thisDeviceId = { localBluetoothAddress(context) }
+            // MAC が取れない場合（Android 10 以降）は名前で照合する。
+            val thisDeviceName = { localBluetoothName(context) }
             val logger: (String) -> Unit = { message -> Log.d("SoundcoreAdapter", message) }
 
             return mapOf(
@@ -79,6 +82,7 @@ class DefaultMultipointAdapterRegistry(
                 SoundcoreMultipointAdapter.MODEL_ID to SoundcoreMultipointAdapter(
                     transport = transport,
                     thisDeviceIdProvider = thisDeviceId,
+                    thisDeviceNameProvider = thisDeviceName,
                     protectionProvider = protectionProvider,
                     logger = logger,
                 ),
@@ -86,6 +90,7 @@ class DefaultMultipointAdapterRegistry(
                 SoundcoreMultipointAdapter.SPACE_A40_MODEL_ID to SoundcoreMultipointAdapter(
                     transport = transport,
                     thisDeviceIdProvider = thisDeviceId,
+                    thisDeviceNameProvider = thisDeviceName,
                     protectionProvider = protectionProvider,
                     logger = logger,
                 ),
@@ -99,20 +104,40 @@ class DefaultMultipointAdapterRegistry(
          * **名前ではなく MAC で判定する**（端末名は変更でき、同名もあり得るため）。
          *
          * Android 6.0 以降、`BluetoothAdapter.getAddress()` はアプリに
-         * `02:00:00:00:00:00` を返すため使えない。代わりに
-         * `Settings.Secure.ANDROID_ID` ではなく、ローカルアダプタのアドレスを
-         * リフレクションで取得する。取得できなければ null を返し、
-         * 呼び出し側は安全側（自動切断しない）に倒れる。
+         * `02:00:00:00:00:00` を返すため使えない。取得できなければ null を返し、
+         * 呼び出し側は [localBluetoothName] にフォールバックする。
          */
         @SuppressLint("MissingPermission", "HardwareIds")
         fun localBluetoothAddress(context: Context): String? = runCatching {
             val manager = context.getSystemService(Context.BLUETOOTH_SERVICE) as? BluetoothManager
             val adapter = manager?.adapter ?: return null
-            // 公開 API では取得できないため、非公開フィールドを読む。
+            // 公開 API では取得できないため、非公開メソッドを読む。
             // 失敗しても安全側に倒れるだけなので、例外は握る。
             val method = adapter.javaClass.getMethod("getAddress")
             (method.invoke(adapter) as? String)
                 ?.takeIf { it.isNotBlank() && it != "02:00:00:00:00:00" }
+        }.getOrNull()
+
+        /**
+         * この端末の Bluetooth 名。
+         *
+         * MAC を取得できない場合の代替。`Settings.Secure` の `bluetooth_name` に
+         * 保存されている値を使う（`BluetoothAdapter.getName()` は権限や実装により
+         * null を返すことがある）。
+         *
+         * 名前は変更でき同名もあり得るため、**MAC が取れない場合の最後の手段**として使う。
+         */
+        @SuppressLint("MissingPermission")
+        fun localBluetoothName(context: Context): String? = runCatching {
+            // まず Settings.Secure を読む（権限不要で確実）。
+            val fromSettings = Settings.Secure.getString(
+                context.contentResolver,
+                "bluetooth_name",
+            )?.takeIf { it.isNotBlank() }
+            if (fromSettings != null) return fromSettings
+
+            val manager = context.getSystemService(Context.BLUETOOTH_SERVICE) as? BluetoothManager
+            manager?.adapter?.name?.takeIf { it.isNotBlank() }
         }.getOrNull()
     }
 }

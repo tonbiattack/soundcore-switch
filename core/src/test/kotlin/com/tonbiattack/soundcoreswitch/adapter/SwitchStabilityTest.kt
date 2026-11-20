@@ -92,7 +92,9 @@ class SwitchStabilityTest {
 
         private fun encodeDeviceList(devices: List<Triple<String, String, Boolean>>): ByteArray {
             val body = mutableListOf<Byte>()
-            body += devices.size.toByte()
+            // 先頭2バイトは「パケット総数」「このパケットの番号」。
+            // 端末数ではない（実機のフレームに合わせる）。
+            body += 1.toByte()
             body += 1.toByte()
             devices.forEachIndexed { index, (mac, name, connected) ->
                 val nameBytes = name.toByteArray(Charsets.UTF_8)
