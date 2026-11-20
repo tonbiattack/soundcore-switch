@@ -21,6 +21,8 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
@@ -119,6 +121,7 @@ fun DesktopApp(
                 // 接続先が多いときに画面外へ押し出されて結果が見えなくなる。
                 SwitchResultBar(
                     switch = state.switch,
+                    bluetooth = state.bluetooth,
                     onDismiss = viewModel::dismissSwitchResult,
                 )
 
@@ -221,29 +224,60 @@ private fun DeviceSelector(
     val others = devices.filter { it.address != current.address }
     var expanded by remember { mutableStateOf(false) }
 
-    Column(
-        modifier = Modifier.fillMaxWidth(),
-        verticalArrangement = Arrangement.spacedBy(8.dp),
-    ) {
+    // イヤホンが1台だけなら選ぶ必要が無いので、行を出さずに済ませる。
+    if (others.isEmpty()) {
         DeviceRow(device = current, selected = true, onSelect = onSelect)
+        return
+    }
 
-        if (others.isNotEmpty()) {
-            TextButton(
-                onClick = { expanded = !expanded },
-                modifier = Modifier.fillMaxWidth(),
-            ) {
+    // 複数台ある場合も、選択中の1台だけを常時表示する。
+    // 展開すると一覧が押し下げられて接続先が選びにくくなるため、
+    // 展開はドロップダウン（重ねて表示）にし、下の一覧を動かさない。
+    Box(Modifier.fillMaxWidth()) {
+        DeviceRow(
+            device = current,
+            selected = true,
+            onSelect = { expanded = true },
+            trailing = {
                 Text(
-                    text = if (expanded) {
-                        "他のイヤホンを隠す"
-                    } else {
-                        "他のイヤホンを表示（${others.size}台）"
+                    text = if (expanded) "▲" else "▼",
+                    style = MaterialTheme.typography.labelLarge,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            },
+        )
+
+        DropdownMenu(
+            expanded = expanded,
+            onDismissRequest = { expanded = false },
+            modifier = Modifier.fillMaxWidth(0.92f),
+        ) {
+            others.forEach { device ->
+                DropdownMenuItem(
+                    text = {
+                        Column {
+                            Text(
+                                text = device.displayName,
+                                style = MaterialTheme.typography.bodyLarge,
+                            )
+                            Text(
+                                text = device.connection.label(),
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                    },
+                    leadingIcon = {
+                        StatusDot(
+                            status = device.connection,
+                            contentDescription = device.connection.label(),
+                        )
+                    },
+                    onClick = {
+                        expanded = false
+                        onSelect(device)
                     },
                 )
-            }
-            if (expanded) {
-                others.forEach { device ->
-                    DeviceRow(device = device, selected = false, onSelect = onSelect)
-                }
             }
         }
     }
@@ -255,6 +289,8 @@ private fun DeviceRow(
     device: EarbudsDevice,
     selected: Boolean,
     onSelect: (EarbudsDevice) -> Unit,
+    /** 行の右端に置く要素。展開できることを示す矢印など。 */
+    trailing: (@Composable () -> Unit)? = null,
 ) {
     val containerColor = if (selected) {
         MaterialTheme.colorScheme.primaryContainer
@@ -303,7 +339,10 @@ private fun DeviceRow(
                     }
                 }
             }
-            if (selected) {
+            if (trailing != null) {
+                Spacer(Modifier.width(8.dp))
+                trailing()
+            } else if (selected) {
                 Spacer(Modifier.width(8.dp))
                 Text(
                     text = "選択中",
@@ -661,6 +700,7 @@ private fun LastUpdated(
 @Composable
 private fun SwitchResultBar(
     switch: SwitchUiState,
+    bluetooth: BluetoothAvailability,
     onDismiss: () -> Unit,
 ) {
     val message: FailureMessage? = when (switch) {
@@ -694,10 +734,41 @@ private fun SwitchResultBar(
                     text = message.detail,
                     style = MaterialTheme.typography.bodySmall,
                 )
+                // 失敗したとき、Bluetooth がオンかオフか分からないと原因を切り分けられない。
+                // 状態を必ず併記する。
+                Spacer(Modifier.height(8.dp))
+                BluetoothStatusLine(availability = bluetooth)
             }
             TextButton(onClick = onDismiss) { Text("閉じる") }
         }
     }
+}
+
+/**
+ * Bluetooth の現在の状態を1行で示す。
+ *
+ * 失敗の原因が「Bluetooth がオフ」なのか「イヤホン側の問題」なのかを
+ * 利用者が切り分けられるようにする。
+ */
+@Composable
+private fun BluetoothStatusLine(availability: BluetoothAvailability) {
+    val (label, color) = when (availability) {
+        BluetoothAvailability.Ready ->
+            "Bluetooth: オン" to MaterialTheme.colorScheme.onSurfaceVariant
+        BluetoothAvailability.Off ->
+            "Bluetooth: オフ" to MaterialTheme.colorScheme.error
+        BluetoothAvailability.PermissionDenied ->
+            "Bluetooth: 権限がありません" to MaterialTheme.colorScheme.error
+        BluetoothAvailability.NotSupported ->
+            "Bluetooth: この端末は非対応" to MaterialTheme.colorScheme.error
+        is BluetoothAvailability.Unknown ->
+            "Bluetooth: 状態を確認できません" to MaterialTheme.colorScheme.error
+    }
+    Text(
+        text = label,
+        style = MaterialTheme.typography.labelMedium,
+        color = color,
+    )
 }
 
 /** 切り替えが無効な理由。押せない理由を必ず伝える。 */
