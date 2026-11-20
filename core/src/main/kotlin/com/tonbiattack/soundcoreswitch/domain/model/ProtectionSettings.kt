@@ -11,11 +11,16 @@ package com.tonbiattack.soundcoreswitch.domain.model
  *
  * @property protectedTargetIds 切断してはならない接続先の ID（MAC）。
  * @property neverDisconnectUnknown 接続先を一意に特定できない場合に自動切断を禁止するか。
- *   既定は true。誤切断より「切り替えできない」ほうが安全なため。
+ *
+ *   **既定は false。** Android 10 以降、アプリからローカル Bluetooth アドレスは
+ *   取得できないため、true にすると Android では切り替えが一切できなくなる。
+ *   代わりに「切断して通信が途切れたら、それが操作元だった」と判断して中止する
+ *   （[com.tonbiattack.soundcoreswitch.adapter.SoundcoreMultipointAdapter] 参照）。
+ *   保護したい端末は [protectedTargetIds] で明示する。
  */
 data class ProtectionSettings(
     val protectedTargetIds: Set<String> = emptySet(),
-    val neverDisconnectUnknown: Boolean = true,
+    val neverDisconnectUnknown: Boolean = false,
 ) {
     /** この接続先を切断してよいか。 */
     fun allowsDisconnect(targetId: String): Boolean =

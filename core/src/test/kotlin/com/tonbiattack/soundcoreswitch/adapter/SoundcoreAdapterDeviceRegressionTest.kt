@@ -189,7 +189,7 @@ class SoundcoreAdapterDeviceRegressionTest {
     }
 
     @Test
-    fun `操作元を特定できない場合は誤切断せず中止する`() = runTest {
+    fun `操作元を特定できず自動切断を禁止する設定なら中止する`() = runTest {
         // 操作元の ID が取れない端末では、どの接続先を切ってよいか判断できない。
         // 誤って必要な端末を切るより、切り替えを中止するほうが安全。
         val transport = SequencedTransport(
@@ -204,6 +204,7 @@ class SoundcoreAdapterDeviceRegressionTest {
         val adapter = SoundcoreMultipointAdapter(
             transport = transport,
             thisDeviceIdProvider = { null },
+            protectionProvider = { ProtectionSettings(neverDisconnectUnknown = true) },
         )
 
         val result = adapter.switchTo(device, target(id = "00:B3:2C:83:80:D8"))

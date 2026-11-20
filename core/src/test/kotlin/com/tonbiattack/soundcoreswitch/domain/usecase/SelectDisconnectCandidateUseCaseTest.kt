@@ -71,11 +71,81 @@ class SelectDisconnectCandidateUseCaseTest {
     }
 
     @Test
-    fun `操作元を特定できない場合は安全側に倒して候補を返さない`() {
-        // 既定は neverDisconnectUnknown = true。誤切断より中止を選ぶ。
+    fun `操作元を特定できない場合でも保護対象以外は候補になる`() {
+        // Android 10 以降、アプリからローカル Bluetooth アドレスは取得できない。
+        // 「特定できない＝中止」にすると Android では切り替えが一切できないため、
+        // 保護対象以外を候補にする。操作元を切った場合は通信断で検出して中止する。
         val selection = useCase.select(
             connected = listOf(thisDevice, pc),
             protection = ProtectionSettings(),
+            thisDeviceId = null,
+        )
+
+        assertTrue(selection.hasCandidates)
+        assertEquals(2, selection.candidates.size)
+    }
+
+    @Test
+    fun `MAC が取れなくても名前で操作元を除外できる`() {
+        // Android 10 以降はローカル MAC を取得できないため、名前で照合する。
+        // これが実質的な操作元の特定手段になる。
+        val selection = useCase.select(
+            connected = listOf(thisDevice, pc),
+            protection = ProtectionSettings(),
+            thisDeviceId = null,
+            thisDeviceName = "OPPO Reno13 A",
+        )
+
+        assertTrue(selection.hasCandidates)
+        assertEquals(listOf(pc.id), selection.candidates.map { it.id })
+    }
+
+    @Test
+    fun `名前で照合するとき大文字小文字と前後の空白を無視する`() {
+        val selection = useCase.select(
+            connected = listOf(thisDevice, pc),
+            protection = ProtectionSettings(),
+            thisDeviceId = null,
+            thisDeviceName = "  oppo reno13 a  ",
+        )
+
+        assertEquals(listOf(pc.id), selection.candidates.map { it.id })
+    }
+
+    @Test
+    fun `名前で照合して操作元しか残らなければ候補を返さない`() {
+        val selection = useCase.select(
+            connected = listOf(thisDevice),
+            protection = ProtectionSettings(),
+            thisDeviceId = null,
+            thisDeviceName = "OPPO Reno13 A",
+        )
+
+        assertFalse(selection.hasCandidates)
+        assertEquals(DisconnectBlockReason.OnlyThisDevice, selection.blockReason)
+    }
+
+    @Test
+    fun `MAC が取れていれば名前より優先する`() {
+        // 同名の端末があっても、MAC が分かっていれば正確に除外できる。
+        val sameName = target(id = "AA:AA:AA:AA:AA:09", displayName = "OPPO Reno13 A")
+
+        val selection = useCase.select(
+            connected = listOf(thisDevice, sameName),
+            protection = ProtectionSettings(),
+            thisDeviceId = thisDevice.id,
+            thisDeviceName = "OPPO Reno13 A",
+        )
+
+        // MAC で除外するため、同名の別端末は候補に残る。
+        assertEquals(listOf(sameName.id), selection.candidates.map { it.id })
+    }
+
+    @Test
+    fun `操作元を特定できず自動切断を禁止する設定なら候補を返さない`() {
+        val selection = useCase.select(
+            connected = listOf(thisDevice, pc),
+            protection = ProtectionSettings(neverDisconnectUnknown = true),
             thisDeviceId = null,
         )
 
@@ -119,19 +189,9 @@ class SelectDisconnectCandidateUseCaseTest {
             thisDeviceId = null,
         )
 
-        // 操作元不明なので既定では中止される。
-        assertFalse(selection.hasCandidates)
-
-        // 自動切断を許容すれば、保護された A だけが除外される。
-        val allowed = useCase.select(
-            connected = listOf(sameNameA, sameNameB),
-            protection = ProtectionSettings(
-                protectedTargetIds = setOf(sameNameA.id),
-                neverDisconnectUnknown = false,
-            ),
-            thisDeviceId = null,
-        )
-        assertEquals(listOf(sameNameB.id), allowed.candidates.map { it.id })
+        // 保護された A だけが除外される。
+        assertTrue(selection.hasCandidates)
+        assertEquals(listOf(sameNameB.id), selection.candidates.map { it.id })
     }
 
     @Test
