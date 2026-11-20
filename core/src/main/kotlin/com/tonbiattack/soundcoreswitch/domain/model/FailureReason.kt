@@ -26,6 +26,15 @@ sealed interface FailureReason {
     /** 接続先の一覧を取得できなかった。 */
     data object TargetListUnavailable : FailureReason
 
+    /**
+     * 接続先の一覧が**一部しか**取得できなかった。
+     *
+     * 分割パケットの欠落・重複・順序不正などで、すべてが揃っていない状態。
+     * 不完全な一覧を「接続先はこれだけ」と扱うと、存在する端末を隠したり、
+     * 誤った切断対象を選んだりする。取得不可として扱う。
+     */
+    data object TargetListIncomplete : FailureReason
+
     /** 切り替え要求は送れたが、結果を確認できなかった。成功として扱ってはならない。 */
     data object SwitchUnconfirmed : FailureReason
 

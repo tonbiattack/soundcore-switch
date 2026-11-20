@@ -55,6 +55,14 @@ fun FailureReason.toMessage(): FailureMessage = when (this) {
             "純正アプリで現在の接続先を確認してください。",
     )
 
+    // 一部しか取れなかった。不完全な一覧を「これだけ」と見せない。
+    FailureReason.TargetListIncomplete -> FailureMessage(
+        title = "接続先を最後まで取得できませんでした",
+        detail = "イヤホンからの応答が途中で途切れました。" +
+            "誤った切り替えを避けるため、取得できた分だけを表示することはしません。" +
+            "イヤホンを再接続してから、もう一度お試しください。",
+    )
+
     // 成功と誤認させないことが最重要。要求は送れたが結果を確認できていない状態。
     FailureReason.SwitchUnconfirmed -> FailureMessage(
         title = "切り替えを確認できませんでした",
@@ -86,6 +94,12 @@ fun FailureReason.toMessage(): FailureMessage = when (this) {
             detail = "どの接続先がこの端末か特定できませんでした。" +
                 "誤って必要な端末を切断しないため、切り替えを中止しました。" +
                 "純正アプリで現在の接続先を確認してください。",
+        )
+        DisconnectBlockReason.CutThisDevice -> FailureMessage(
+            title = "この端末の接続を切ってしまいました",
+            detail = "切り替えの途中で、この端末自身の接続を切断しました。" +
+                "イヤホンと再接続してから、もう一度お試しください。" +
+                "切り替えたい端末を保護しておくと、次回から切られません。",
         )
         DisconnectBlockReason.NoConnectedTargets -> FailureMessage(
             title = "切り替えできません",

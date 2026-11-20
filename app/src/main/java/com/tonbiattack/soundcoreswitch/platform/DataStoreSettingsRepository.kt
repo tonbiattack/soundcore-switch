@@ -72,16 +72,45 @@ class DataStoreSettingsRepository(
 
     override suspend fun protectionSettings(): ProtectionSettings =
         try {
+            migrateLegacyProtectionDefault()
             val prefs = dataStore.data.first()
             ProtectionSettings(
                 protectedTargetIds = prefs[KEY_PROTECTED_TARGETS].orEmpty(),
-                neverDisconnectUnknown = prefs[KEY_NEVER_DISCONNECT_UNKNOWN] ?: true,
+                neverDisconnectUnknown = prefs[KEY_NEVER_DISCONNECT_UNKNOWN] ?: false,
             )
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
             ProtectionSettings()
         }
+
+    /**
+     * 旧既定値（`neverDisconnectUnknown = true`）を新しい既定値へ移行する。
+     *
+     * 以前のバージョンはこの値を true で保存していた。true のままだと、
+     * Android では操作元の MAC を取得できないため**切り替えが一切できない**。
+     *
+     * この設定を変更する UI は無いため、保存されている true は
+     * 「利用者が明示的に選んだ値」ではなく旧既定値と判断できる。
+     * 一度だけ false に書き換える（[KEY_PROTECTION_MIGRATED] で再実行を防ぐ）。
+     */
+    private suspend fun migrateLegacyProtectionDefault() {
+        try {
+            dataStore.edit { prefs ->
+                // 移行済みなら何もしない。
+                if (prefs[KEY_PROTECTION_MIGRATED] != true) {
+                    if (prefs[KEY_NEVER_DISCONNECT_UNKNOWN] == true) {
+                        prefs[KEY_NEVER_DISCONNECT_UNKNOWN] = false
+                    }
+                    prefs[KEY_PROTECTION_MIGRATED] = true
+                }
+            }
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            // 移行できなくても動作は継続できる。次回起動時に再試行する。
+        }
+    }
 
     override suspend fun setProtectionSettings(settings: ProtectionSettings) {
         try {
@@ -107,5 +136,8 @@ class DataStoreSettingsRepository(
 
         /** 操作元を特定できない場合に自動切断を禁止するか。 */
         val KEY_NEVER_DISCONNECT_UNKNOWN = booleanPreferencesKey("never_disconnect_unknown")
+
+        /** 保護設定の移行を完了したか。旧既定値の書き換えを1回だけ行うためのフラグ。 */
+        val KEY_PROTECTION_MIGRATED = booleanPreferencesKey("protection_migrated_v2")
     }
 }

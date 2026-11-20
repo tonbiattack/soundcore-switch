@@ -31,6 +31,7 @@ Soundcore Switch の設計・調査・検証の記録。
 | [FRESHNESS_INVESTIGATION.md](./FRESHNESS_INVESTIGATION.md) | 「最新が反映されない」不具合の調査記録 | 状態更新の経路を変えるとき |
 | [SWITCH_STABILITY.md](./SWITCH_STABILITY.md) | 切り替えが不安定な問題の調査記録 | 待ち時間・再試行を変えるとき |
 | [UI_USABILITY.md](./UI_USABILITY.md) | 画面の使い勝手（イヤホン選択・失敗時の案内） | 画面構成を変えるとき |
+| [ADDING_MODELS.md](./ADDING_MODELS.md) | 対応機種の追加手順と検証チェックリスト | 機種を追加するとき |
 | [QUICK_ACCESS.md](./QUICK_ACCESS.md) | クイック設定タイルとシステムトレイ | 常駐機能を変えるとき |
 | [DEVICE_WARDEN.md](./DEVICE_WARDEN.md) | 実機のリース運用（heartbeat の落とし穴） | 実機運用を変えるとき |
 

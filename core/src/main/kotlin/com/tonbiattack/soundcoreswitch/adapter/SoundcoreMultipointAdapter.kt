@@ -11,6 +11,9 @@ import com.tonbiattack.soundcoreswitch.domain.model.SwitchResult
 import com.tonbiattack.soundcoreswitch.domain.model.TargetKind
 import com.tonbiattack.soundcoreswitch.domain.model.TargetListResult
 import com.tonbiattack.soundcoreswitch.domain.usecase.SelectDisconnectCandidateUseCase
+import com.tonbiattack.soundcoreswitch.protocol.DeviceListAssembler
+import com.tonbiattack.soundcoreswitch.protocol.DeviceListSnapshot
+import com.tonbiattack.soundcoreswitch.protocol.LogRedaction
 import com.tonbiattack.soundcoreswitch.protocol.RawDevice
 import com.tonbiattack.soundcoreswitch.protocol.SoundcoreProtocol
 import com.tonbiattack.soundcoreswitch.protocol.SoundcoreTransport
@@ -70,6 +73,14 @@ class SoundcoreMultipointAdapter(
      * 特定できなければ null。その場合の挙動は [ProtectionSettings] に従う。
      */
     private val thisDeviceIdProvider: () -> String? = { null },
+    /**
+     * 操作元（この端末）の Bluetooth 名を返す。
+     *
+     * [thisDeviceIdProvider] が null を返したときの代替。
+     * Android 10 以降はローカル MAC を取得できないため、名前で照合するしかない。
+     * 名前も取れなければ null。
+     */
+    private val thisDeviceNameProvider: () -> String? = { null },
     /** 保護設定の供給元。切断してよい端末を制限する。 */
     private val protectionProvider: () -> ProtectionSettings = { ProtectionSettings() },
     /** 診断用のログ出力。既定は何もしない（`:core` は Android に依存しないため）。 */
@@ -83,11 +94,15 @@ class SoundcoreMultipointAdapter(
             ?: return TargetListResult.Unavailable(FailureReason.UnsupportedModel)
 
         return try {
-            val devices = fetchDevices(device.address, modelCode)
-            if (devices == null) {
-                TargetListResult.Unavailable(FailureReason.TargetListUnavailable)
-            } else {
-                TargetListResult.Available(devices.map { it.toTarget() })
+            val snapshot = fetchDevices(device.address, modelCode)
+            when {
+                snapshot == null ->
+                    TargetListResult.Unavailable(FailureReason.TargetListUnavailable)
+                // 部分取得は「取得不可」として扱う。不完全な一覧を
+                // 「接続先がこれだけ」と表示すると、存在する端末を隠してしまう。
+                !snapshot.isComplete ->
+                    TargetListResult.Unavailable(FailureReason.TargetListIncomplete)
+                else -> TargetListResult.Available(snapshot.devices.map { it.toTarget() })
             }
         } catch (e: CancellationException) {
             throw e
@@ -108,11 +123,20 @@ class SoundcoreMultipointAdapter(
         // 操作元（この端末）の接続先 ID。切断対象から除外するために使う。
         // 名前ではなく ID（MAC）で判定する。端末名は変更でき、同名もあり得るため。
         val thisDeviceId = runCatching { thisDeviceIdProvider() }.getOrNull()
+        // MAC が取れない場合（Android 10 以降）は名前で照合する。
+        val thisDeviceName = if (thisDeviceId == null) {
+            runCatching { thisDeviceNameProvider() }.getOrNull()?.takeIf { it.isNotBlank() }
+        } else {
+            null
+        }
         val protection = runCatching { protectionProvider() }.getOrDefault(ProtectionSettings())
 
         return try {
-            val before = fetchDevices(device.address, modelCode)
-                ?: return SwitchResult.Failed(FailureReason.TargetListUnavailable)
+            // 切り替えの判断には完全な一覧だけを使う。
+            // 部分取得で判断すると、存在する端末を「無い」と誤認して
+            // 誤った切断対象を選ぶ恐れがある。
+            val before = fetchCompleteDevices(device.address, modelCode)
+                ?: return SwitchResult.Failed(FailureReason.TargetListIncomplete)
 
             val wanted = before.firstOrNull { it.mac.equals(target.id, ignoreCase = true) }
                 ?: return SwitchResult.Failed(FailureReason.TargetNotFound)
@@ -126,10 +150,17 @@ class SoundcoreMultipointAdapter(
             // これをしないと接続コマンドが無視される（実機で確認済み）。
             val connected = before.filter { it.connected }.map { it.toTarget() }
             if (connected.size >= maxConnections) {
-                val selection = selectCandidate.select(connected, protection, thisDeviceId)
+                val selection = selectCandidate.select(
+                    connected,
+                    protection,
+                    thisDeviceId,
+                    thisDeviceName,
+                )
                 logger(
-                    "切断候補=${selection.candidates.map { it.displayName }} " +
-                        "操作元ID=$thisDeviceId 保護=${protection.protectedTargetIds.size}件",
+                    "切断候補=${selection.candidates.map { LogRedaction.deviceId(it.id) }} " +
+                        "操作元=${LogRedaction.deviceId(thisDeviceId)} " +
+                        "操作元名=${LogRedaction.deviceName(thisDeviceName)} " +
+                        "保護=${protection.protectedTargetIds.size}件",
                 )
 
                 if (!selection.hasCandidates) {
@@ -157,9 +188,24 @@ class SoundcoreMultipointAdapter(
                     // 反映するまで時間がかかるため、1回だけ見て「切断できなかった」と
                     // 判定すると、実際には切れているのに次の候補へ進んでしまう
                     // （実機で切り替えが不安定になる原因）。
-                    if (awaitDisconnected(device.address, modelCode, victim.id)) {
-                        freed = true
-                        break
+                    val outcome = awaitDisconnected(device.address, modelCode, victim.id)
+                    when (outcome) {
+                        DisconnectOutcome.DISCONNECTED -> {
+                            freed = true
+                            break
+                        }
+                        // 切断後に一覧が取れない＝通信が途切れた。
+                        // 操作元（この端末）を切ってしまった可能性が高い。
+                        // これ以上進むと何もできなくなるため中止する。
+                        DisconnectOutcome.LOST_CONNECTION -> {
+                            logger("切断後に通信が途切れた。操作元を切った可能性があるため中止する")
+                            return SwitchResult.Failed(
+                                FailureReason.CannotFreeConnectionSlot(
+                                    DisconnectBlockReason.CutThisDevice,
+                                ),
+                            )
+                        }
+                        DisconnectOutcome.STILL_CONNECTED -> Unit
                     }
                 }
 
@@ -176,7 +222,7 @@ class SoundcoreMultipointAdapter(
                 command = SoundcoreProtocol.Cmd.CONNECT_DEVICE,
                 body = SoundcoreProtocol.parseMac(wanted.mac),
             )
-            logger("接続コマンド送信 target=${wanted.name}")
+            logger("接続コマンド送信 target=${LogRedaction.deviceId(wanted.mac)}")
 
             // 状態を再取得して、実際に接続中になったことを確認する。
             // イヤホンが接続を確立するまで時間がかかるため、反映されるまで数回試す。
@@ -187,10 +233,10 @@ class SoundcoreMultipointAdapter(
                 delay(
                     if (attempt == 0) confirmInitialDelayMillis else confirmRetryIntervalMillis,
                 )
-                val current = fetchDevices(device.address, modelCode) ?: continue
+                val current = fetchCompleteDevices(device.address, modelCode) ?: continue
                 lastList = current
                 confirmed = current.firstOrNull { it.mac.equals(wanted.mac, ignoreCase = true) }
-                logger("確認${attempt + 1}回目 接続中=${current.filter { it.connected }.map { it.name }}")
+                logger("確認${attempt + 1}回目 ${LogRedaction.deviceList(current)}")
                 if (confirmed?.connected == true) break
             }
 
@@ -206,10 +252,10 @@ class SoundcoreMultipointAdapter(
         } catch (e: CancellationException) {
             throw e
         } catch (e: SoundcoreTransportException) {
-            logger("通信失敗: ${e.message}")
+            logger("通信失敗: ${LogRedaction.error(e)}")
             SwitchResult.Failed(FailureReason.Timeout)
         } catch (e: Exception) {
-            logger("想定外の失敗: ${e.javaClass.simpleName} ${e.message}")
+            logger("想定外の失敗: ${LogRedaction.error(e)}")
             SwitchResult.Failed(FailureReason.Unknown)
         }
     }
@@ -219,7 +265,16 @@ class SoundcoreMultipointAdapter(
      *
      * @return 取得できなければ null。
      */
-    private suspend fun fetchDevices(mac: String, modelCode: String): List<RawDevice>? {
+    /**
+     * 接続先一覧を取得する。分割パケットをすべて集めて組み立てる。
+     *
+     * **完全に取得できたかを区別する。** 部分取得を「一覧のすべて」として扱うと、
+     * 実際には接続中の端末を「切断中」と誤認して自動切断の対象にしたり、
+     * 接続成功の判定を誤ったりする。
+     *
+     * @return 取得できなければ null。部分取得の場合は [DeviceListSnapshot.isComplete] が false。
+     */
+    private suspend fun fetchDevices(mac: String, modelCode: String): DeviceListSnapshot? {
         val packet = SoundcoreProtocol.buildPacket(SoundcoreProtocol.Cmd.GET_DEVICES)
         val frames = transport.exchange(
             mac = mac,
@@ -235,16 +290,27 @@ class SoundcoreMultipointAdapter(
 
         if (chunks.isEmpty()) return null
 
-        // パケット番号順に並べ、重複を除いて連結する。
-        val total = chunks.first().total
-        val ordered = chunks.sortedBy { it.index }
-        val devices = ordered.flatMap { it.devices }
-
-        // 全パケットが揃っていなくても、取れたぶんは返す。
-        // ただし1件も取れていなければ失敗として扱う。
-        if (devices.isEmpty() && total > 0) return null
-        return devices
+        val snapshot = DeviceListAssembler.assemble(chunks)
+        if (!snapshot.isComplete) {
+            logger(
+                "接続先一覧が不完全: ${snapshot.receivedCount}/${snapshot.expectedTotal} パケット",
+            )
+        }
+        // 1件も取れていない場合は失敗として扱う（空の一覧と区別する）。
+        if (snapshot.devices.isEmpty() && snapshot.expectedTotal > 0) return null
+        return snapshot
     }
+
+    /**
+     * 完全に取得できた一覧だけを返す。
+     *
+     * 切り替えの判断（切断対象の選択・接続成功の判定）に使う。
+     * 不完全な一覧では判断しない。
+     */
+    private suspend fun fetchCompleteDevices(
+        mac: String,
+        modelCode: String,
+    ): List<RawDevice>? = fetchDevices(mac, modelCode)?.completeOrNull()
 
     /** 応答を待たないコマンドを送る。 */
     private suspend fun sendCommand(
@@ -262,12 +328,10 @@ class SoundcoreMultipointAdapter(
             timeoutMillis = timeoutMillis,
         )
         // 応答の内容を記録する。イヤホンが要求を拒否した場合、ここに理由が現れる。
+        // body には MAC・端末名が含まれるため、長さだけを残す。
         frames.forEach { frame ->
             val cmd = SoundcoreProtocol.commandOf(frame)
-            val hex = SoundcoreProtocol.bodyOf(frame).joinToString(" ") {
-                "%02X".format(it.toInt() and 0xFF)
-            }
-            logger("応答 cmd=%04X body=[%s]".format(cmd, hex))
+            logger("応答 cmd=%04X %s".format(cmd, LogRedaction.body(SoundcoreProtocol.bodyOf(frame))))
         }
     }
 
@@ -278,32 +342,54 @@ class SoundcoreMultipointAdapter(
      * 1回だけ確認すると、まだ反映されていない瞬間を見て「切断できなかった」と
      * 誤判定し、無駄に次の候補へ進んでしまう（切り替えが不安定になる原因）。
      *
-     * 一覧の取得自体に失敗した場合は、判断できないため「まだ接続中」として扱う
-     * （切断できたと誤認して接続に進むより安全）。
+     * **通信が途切れた場合を区別する。** 操作元（この端末）を切ってしまうと
+     * 以降の一覧取得がすべて失敗する。これを「まだ接続中」と扱って次の候補へ
+     * 進むと、通信できないまま無駄に処理を続けることになる。
      *
-     * @return 切断を確認できたら true。
+     * @return 確認結果。
      */
     private suspend fun awaitDisconnected(
         mac: String,
         modelCode: String,
         targetId: String,
-    ): Boolean {
+    ): DisconnectOutcome {
+        var consecutiveFailures = 0
         for (attempt in 0 until DISCONNECT_CONFIRM_ATTEMPTS) {
             delay(
                 if (attempt == 0) disconnectSettleMillis else disconnectRetryIntervalMillis,
             )
-            val current = fetchDevices(mac, modelCode)
+            // 完全な一覧でしか切断を確認しない。部分取得では
+            // 「一覧に無い＝切断された」と誤認する恐れがある。
+            val current = fetchCompleteDevices(mac, modelCode)
             if (current == null) {
-                logger("切断確認${attempt + 1}回目: 一覧を取得できないため継続する")
+                consecutiveFailures++
+                logger("切断確認${attempt + 1}回目: 一覧を取得できない (${consecutiveFailures}回連続)")
+                // 連続して取得できないなら、通信が途切れたと判断する。
+                if (consecutiveFailures >= LOST_CONNECTION_THRESHOLD) {
+                    return DisconnectOutcome.LOST_CONNECTION
+                }
                 continue
             }
+            consecutiveFailures = 0
             val stillConnected = current
                 .firstOrNull { it.mac.equals(targetId, ignoreCase = true) }
                 ?.connected
             logger("切断確認${attempt + 1}回目: まだ接続中=$stillConnected")
-            if (stillConnected == false) return true
+            if (stillConnected == false) return DisconnectOutcome.DISCONNECTED
         }
-        return false
+        return DisconnectOutcome.STILL_CONNECTED
+    }
+
+    /** 切断確認の結果。 */
+    private enum class DisconnectOutcome {
+        /** 切断を確認できた。 */
+        DISCONNECTED,
+
+        /** まだ接続中のまま。別の候補を試す。 */
+        STILL_CONNECTED,
+
+        /** 一覧を取得できなくなった。操作元を切った可能性がある。 */
+        LOST_CONNECTION,
     }
 
     companion object {
@@ -332,6 +418,14 @@ class SoundcoreMultipointAdapter(
          * 待ち時間は 1.5 秒 + 1.0 秒 × 3 = 最大 4.5 秒。
          */
         const val DISCONNECT_CONFIRM_ATTEMPTS = 4
+
+        /**
+         * 一覧の取得が連続で失敗したら「通信が途切れた」と判断する回数。
+         *
+         * 操作元（この端末）を切ると、以降の一覧取得がすべて失敗する。
+         * 1回の失敗では一時的な問題と区別できないため、連続を条件にする。
+         */
+        const val LOST_CONNECTION_THRESHOLD = 2
     }
 }
 

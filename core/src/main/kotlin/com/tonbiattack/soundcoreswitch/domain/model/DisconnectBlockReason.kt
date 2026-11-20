@@ -15,6 +15,14 @@ sealed interface DisconnectBlockReason {
     /** どの端末が操作元か特定できず、安全に切断できない。 */
     data object CannotIdentifyThisDevice : DisconnectBlockReason
 
+    /**
+     * 切断した結果、通信が途切れた。
+     *
+     * 操作元（この端末）を切ってしまった可能性が高い。
+     * これ以上進むと何もできなくなるため、切り替えを中止する。
+     */
+    data object CutThisDevice : DisconnectBlockReason
+
     /** 接続中の端末が無い（上限には達していない）。 */
     data object NoConnectedTargets : DisconnectBlockReason
 }
