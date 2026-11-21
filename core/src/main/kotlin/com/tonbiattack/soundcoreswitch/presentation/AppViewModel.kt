@@ -4,6 +4,7 @@ import com.tonbiattack.soundcoreswitch.domain.adapter.BluetoothAvailability
 import com.tonbiattack.soundcoreswitch.domain.adapter.BluetoothAvailabilityChecker
 import com.tonbiattack.soundcoreswitch.domain.adapter.EarbudsScanner
 import com.tonbiattack.soundcoreswitch.domain.adapter.ScanResult
+import com.tonbiattack.soundcoreswitch.domain.model.ConnectionStatus
 import com.tonbiattack.soundcoreswitch.domain.model.EarbudsDevice
 import com.tonbiattack.soundcoreswitch.domain.model.MultipointTarget
 import com.tonbiattack.soundcoreswitch.domain.model.ProtectionSettings
@@ -344,19 +345,41 @@ class AppViewModel(
      *
      * 前回選択の復元をここに置くことで、検出結果が揃う前に復元を試みる競合を避ける。
      */
+    /**
+     * 選択を決める。
+     *
+     * 優先順位:
+     * 1. **接続中のイヤホン**（今つながっているものを最初に選ぶ）
+     * 2. 現在の選択（接続中でなくても、ユーザーが選んだものは維持する）
+     * 3. 前回選択（仕様書 F-07）
+     * 4. 先頭
+     *
+     * 接続中を最優先にするのは、**ユーザーが最も操作したいのは今つながっている
+     * イヤホン**だから。複数ペアリングしていると、前回選んだ別の機種が
+     * 選ばれたままで「なぜか切り替えられない」状態になっていた。
+     *
+     * 前回選択の復元をここに置くことで、検出結果が揃う前に復元を試みる競合を避ける。
+     */
     private suspend fun resolveSelection(devices: List<EarbudsDevice>): EarbudsDevice? {
         if (devices.isEmpty()) return null
 
+        // 1. 接続中のイヤホンを最優先。複数あれば先頭（検出順）を使う。
+        val connected = devices.firstOrNull { it.connection == ConnectionStatus.CONNECTED }
+        if (connected != null) return connected
+
+        // 2. 現在の選択を維持する。
         val current = _state.value.selectedDevice
         val kept = current?.let { selected -> devices.firstOrNull { it.address == selected.address } }
         if (kept != null) return kept
 
+        // 3. 前回選択を復元する。
         val remembered = settings.lastSelectedAddress()
         if (remembered != null) {
             val restored = devices.firstOrNull { it.address == remembered }
             if (restored != null) return restored
         }
 
+        // 4. 先頭。
         return devices.first()
     }
 }
