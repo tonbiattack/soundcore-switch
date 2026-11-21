@@ -5,6 +5,8 @@ import android.bluetooth.BluetoothDevice
 import android.bluetooth.BluetoothManager
 import android.bluetooth.BluetoothProfile
 import android.content.Context
+import android.media.AudioDeviceInfo
+import android.media.AudioManager
 import android.util.Log
 import com.tonbiattack.soundcoreswitch.domain.adapter.BluetoothAvailability
 import com.tonbiattack.soundcoreswitch.domain.adapter.BluetoothAvailabilityChecker
@@ -74,9 +76,10 @@ class AndroidEarbudsScanner(
 
         val devices = bonded.mapNotNull { device -> toEarbudsDevice(device, connected) }
             .sortedBy { it.displayName.lowercase() }
+        val withAudioOutput = markConnectedAudioOutputs(devices)
 
         Log.d(TAG, "ペアリング済み ${bonded.size} 件のうち Soundcore 候補 ${devices.size} 件")
-        return ScanResult.Found(devices)
+        return ScanResult.Found(withAudioOutput)
     }
 
     /**
@@ -110,6 +113,34 @@ class AndroidEarbudsScanner(
             supportLevel = ModelCatalog.supportLevelOf(model.id),
             connection = connectionStatusOf(device, connected),
         )
+    }
+
+    /**
+     * 公開 AudioManager API の Bluetooth 音声出力を接続中として補完する。
+     * BluetoothManager は A2DP / HEADSET を扱えない端末がある。
+     * アドレスで照合できない場合は、一意に一致する名前だけを使う。
+     * 同名のイヤホンが複数ある場合は推測しない。
+     */
+    private fun markConnectedAudioOutputs(devices: List<EarbudsDevice>): List<EarbudsDevice> {
+        val manager = context.getSystemService(Context.AUDIO_SERVICE) as? AudioManager ?: return devices
+        val outputs = runCatching { manager.getDevices(AudioManager.GET_DEVICES_OUTPUTS) }
+            .getOrNull() ?: return devices
+        val audioOutputs = outputs.filter {
+            it.type == AudioDeviceInfo.TYPE_BLUETOOTH_A2DP ||
+                it.type == AudioDeviceInfo.TYPE_BLUETOOTH_SCO ||
+                (android.os.Build.VERSION.SDK_INT >= 31 && it.type == AudioDeviceInfo.TYPE_BLE_HEADSET)
+        }
+        val identities = audioOutputs.map { output ->
+            AudioOutputIdentity(
+                address = if (android.os.Build.VERSION.SDK_INT >= 28) {
+                    runCatching { output.address }.getOrNull()
+                } else {
+                    null
+                },
+                name = output.productName?.toString(),
+            )
+        }
+        return markConnectedAudioOutputs(devices, identities)
     }
 
     /** 既知の機種に一致しなくても Soundcore 製品と推定できる表示名か。 */
