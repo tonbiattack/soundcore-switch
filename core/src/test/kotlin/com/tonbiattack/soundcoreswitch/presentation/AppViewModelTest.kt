@@ -93,10 +93,16 @@ class AppViewModelTest {
 
     @Test
     fun `前回選択した機種を復元する`() = runTest {
-        val other = earbuds(address = "11:22:33:44:55:66", displayName = "Space A40 2台目")
+        // 接続中が無い状態で、前回選択が復元されることを確認する。
+        // 接続中があればそちらが優先される（AppViewModelSelectionTest 参照）。
+        val other = earbuds(
+            address = "11:22:33:44:55:66",
+            displayName = "Space A40 2台目",
+            connection = ConnectionStatus.DISCONNECTED,
+        )
         val h = harness(
             scope = this,
-            devices = listOf(device, other),
+            devices = listOf(device.copy(connection = ConnectionStatus.DISCONNECTED), other),
             settings = InMemorySettings(address = other.address),
         )
 
