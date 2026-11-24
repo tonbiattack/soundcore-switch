@@ -1,5 +1,7 @@
 # Soundcore Switch
 
+**日本語** | [English](README.en.md)
+
 Soundcore イヤホンのマルチポイント接続先を、純正アプリを開かずに確認・切り替えるアプリ。
 **Android と Windows の両方で動作します。**
 
