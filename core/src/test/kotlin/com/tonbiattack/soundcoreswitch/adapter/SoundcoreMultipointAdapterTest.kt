@@ -295,9 +295,10 @@ class SoundcoreMultipointAdapterTest {
             com.tonbiattack.soundcoreswitch.domain.model.TargetKind.TABLET,
             guessKind("Tablet A"),
         )
+        // 手掛かりの無い名前は UNKNOWN のままにする（推測で断定しない）。
         assertEquals(
             com.tonbiattack.soundcoreswitch.domain.model.TargetKind.UNKNOWN,
-            guessKind("LAPTOP-B"),
+            guessKind("DEVBOARD-A"),
         )
     }
 }
