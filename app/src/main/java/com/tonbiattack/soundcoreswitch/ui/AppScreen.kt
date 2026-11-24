@@ -457,6 +457,14 @@ private fun TargetList(
     onToggleFavorite: (String) -> Unit,
     onToggleProtection: (String) -> Unit,
 ) {
+    if (snapshot.fromCache) {
+        Text(
+            text = "以前の一覧です。現在の接続状態は不明です。更新できるまで切り替えはできません。",
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.error,
+        )
+        TextButton(onClick = onRefresh) { Text("最新の状態を取得") }
+    }
     if (snapshot.targets.isEmpty()) {
         Text(
             text = "接続先が登録されていません",
@@ -488,7 +496,7 @@ private fun TargetList(
             LastUpdated(
                 snapshot = snapshot,
                 onRefresh = onRefresh,
-                disabledReason = disabledReason(canSwitch, selectedDevice),
+                disabledReason = if (snapshot.fromCache) null else disabledReason(canSwitch, selectedDevice),
             )
         }
     }

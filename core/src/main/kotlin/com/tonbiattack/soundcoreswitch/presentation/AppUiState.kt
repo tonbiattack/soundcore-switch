@@ -35,7 +35,8 @@ data class AppUiState(
      * 切り替え操作を受け付けてよいか。
      *
      * 送信中は二重送信を防ぐため false。加えて、機種が対応済みで、
-     * Bluetooth が使えることを要求する。
+     * Bluetooth が使え、接続先の最新一覧を取得できていることを要求する。
+     * キャッシュや更新失敗後の一覧からは切り替えない。
      *
      * イヤホンの接続状態は「切断中と確定している」場合だけ止める。
      * 「不明」は取得できなかっただけで切断とは限らないため、操作は許可する
@@ -47,6 +48,7 @@ data class AppUiState(
         get() = switch !is SwitchUiState.InFlight &&
             selectedDevice?.supportLevel?.allowsSwitching == true &&
             selectedDevice?.connection != ConnectionStatus.DISCONNECTED &&
+            (targets as? TargetsUiState.Ready)?.snapshot?.fromCache == false &&
             bluetooth == BluetoothAvailability.Ready
 
     /** 接続先一覧を表示できる状態か。 */

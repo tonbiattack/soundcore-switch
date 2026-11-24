@@ -54,7 +54,11 @@ fun ApplicationScope.AppTray(
         onAction = onShowWindow,
         menu = {
             // 接続先の一覧。接続中は先頭に出す。
-            val targets = (state.targets as? TargetsUiState.Ready)?.snapshot?.targets.orEmpty()
+            val snapshot = (state.targets as? TargetsUiState.Ready)?.snapshot
+            val targets = snapshot?.targets.orEmpty()
+            if (snapshot?.fromCache == true) {
+                Item("以前の一覧（現在の状態は不明）", onClick = {}, enabled = false)
+            }
             if (targets.isEmpty()) {
                 Item("接続先を取得できません", onClick = onShowWindow)
             } else {
