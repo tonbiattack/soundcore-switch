@@ -145,13 +145,21 @@ APK を直接開き、「提供元不明のアプリ」を許可すると以降�
 
 ## リリース
 
-`v*` 形式のタグを push すると、GitHub Actions が APK と Windows インストーラを
-ビルドして GitHub Releases に添付する。
+このリポジトリは非公開。Obtainium で利用するには、このリポジトリの
+GitHub Releases に署名済み APK を添付し、Obtainium の GitHub 設定に
+このリポジトリを読めるトークンを設定する。トークンや署名鍵をリポジトリや
+チャットに貼らない。Android に既に入っているアプリを更新するには、
+同一の署名鍵と、インストール済みより大きい `versionCode` が必要。
 
 ```powershell
-git tag v0.1.0
-git push origin v0.1.0
+# 個人利用向け。最初に使った同じ Android debug.keystore が必要。
+.\scripts\gradle.ps1 :app:assembleDebug '-PappVersionCode=2' '-PappVersionName=0.1.1'
+# APK の署名・バージョンを確認した後、非公開リポジトリの Releases に添付する。
 ```
+
+**別の PC や CI で自動生成した debug 鍵では既存アプリを更新できない。**
+鍵は安全にバックアップする。今後のリリースでは `versionCode` を増やし、
+同じ鍵で署名すること。タグ push だけでは APK は公開されない。
 
 ## アーキテクチャ
 

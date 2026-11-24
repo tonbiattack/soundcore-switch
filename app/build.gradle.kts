@@ -12,8 +12,10 @@ android {
         applicationId = "com.tonbiattack.soundcoreswitch"
         minSdk = 26
         targetSdk = 36
-        versionCode = 1
-        versionName = "0.1.0"
+        // リリース作成時は -PappVersionCode / -PappVersionName で指定する。
+        // 省略時は開発版と同じ値を使う。
+        versionCode = providers.gradleProperty("appVersionCode").orNull?.toInt() ?: 1
+        versionName = providers.gradleProperty("appVersionName").orNull ?: "0.1.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
