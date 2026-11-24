@@ -106,7 +106,7 @@ class SelectDisconnectCandidateUseCaseTest {
             connected = listOf(thisDevice, pc),
             protection = ProtectionSettings(),
             thisDeviceId = null,
-            thisDeviceName = "  oppo reno13 a  ",
+            thisDeviceName = "  pixel 9  ",
         )
 
         assertEquals(listOf(pc.id), selection.candidates.map { it.id })
