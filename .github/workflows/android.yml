@@ -8,8 +8,11 @@ on:
     branches: [main]
   workflow_dispatch:
 
+# CI はテストとビルド成果物の保存だけを行う。
+# リリース作成は署名鍵を持つローカル環境で手動で行う（docs/RELEASE.md）。
+# そのため contents の書き込み権限は不要。
 permissions:
-  contents: write
+  contents: read
 
 jobs:
   # 共有ロジックのテスト。プラットフォーム非依存なので Linux で速く回す。
