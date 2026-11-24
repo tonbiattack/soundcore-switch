@@ -108,7 +108,10 @@ object DeviceListAssembler {
         // パケット番号順に連結する。受信順に依存しない。
         val ordered = byIndex.toSortedMap().values.map { it.single() }
         val devices = ordered.flatMap { it.devices }
-        val complete = ordered.size == total
+        // 同じ接続先が複数の応答に混じると、異なる時点の状態が混在した可能性がある。
+        // どちらが最新かは判断できないため、操作に使える完全な一覧として扱わない。
+        val uniqueIds = devices.map { it.mac.uppercase() }.toSet()
+        val complete = ordered.size == total && uniqueIds.size == devices.size
 
         return DeviceListSnapshot(
             devices = devices,

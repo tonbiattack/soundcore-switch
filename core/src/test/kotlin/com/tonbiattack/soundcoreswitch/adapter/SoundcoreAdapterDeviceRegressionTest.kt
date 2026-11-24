@@ -103,6 +103,22 @@ class SoundcoreAdapterDeviceRegressionTest {
     }
 
     @Test
+    fun `重複した端末が一覧に含まれる場合は切断や接続を行わない`() = runTest {
+        val transport = SequencedTransport(
+            deviceLists = listOf(listOf(
+                Triple("AA:AA:AA:AA:AA:01", "端末A", true),
+                Triple("AA:AA:AA:AA:AA:01", "端末A", false),
+                Triple("AA:AA:AA:AA:AA:02", "端末B", false),
+            )),
+        )
+        val adapter = SoundcoreMultipointAdapter(transport = transport)
+        val result = adapter.switchTo(device, target(id = "AA:AA:AA:AA:AA:02"))
+
+        assertEquals(SwitchResult.Failed(FailureReason.TargetListIncomplete), result)
+        assertEquals(listOf(SoundcoreProtocol.Rsp.DUAL_DEVICES), transport.sentCommands)
+    }
+
+    @Test
     fun `操作元の端末は切断対象に選ばない`() = runTest {
         // 実機の Bluetooth 名は「Pixel 9」。キーワード判定では PC と認識されず、
         // 修正前は操作元自身が切断されていた。

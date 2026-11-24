@@ -201,6 +201,82 @@ class AppViewModelTest {
     }
 
     @Test
+    fun `重複した古いキャッシュは状態不明にして切り替えを禁止する`() = runTest {
+        val cache = InMemoryTargetCache()
+        val old = target(id = "AA:BB:CC:DD:EE:01", status = ConnectionStatus.CONNECTED)
+        cache.write(device.address, TargetSnapshot(listOf(old, old), 500L, true))
+        val repository = FakeTargetRepository(
+            cache = cache,
+            fetchResult = TargetListResult.Unavailable(FailureReason.Timeout),
+        )
+        val adapter = FakeMultipointAdapter(modelId = modelId)
+        val h = harness(this, repository = repository, cache = cache, adapter = adapter)
+
+        h.viewModel.start()
+        advanceUntilIdle()
+
+        val snapshot = (h.viewModel.state.value.targets as TargetsUiState.Ready).snapshot
+        assertEquals(1, snapshot.targets.size)
+        assertEquals(ConnectionStatus.UNKNOWN, snapshot.targets.single().status)
+        assertTrue(snapshot.fromCache)
+        assertFalse(h.viewModel.state.value.canSwitch)
+        h.viewModel.switchTo(old)
+        advanceUntilIdle()
+        assertEquals(0, adapter.switchCalls)
+    }
+
+    @Test
+    fun `表示中の最新一覧も更新失敗後は状態不明として扱う`() = runTest {
+        val connected = target(id = "AA:BB:CC:DD:EE:01", status = ConnectionStatus.CONNECTED)
+        val repository = FakeTargetRepository(fetchResult = TargetListResult.Available(listOf(connected)))
+        val h = harness(this, repository = repository)
+        h.viewModel.start()
+        advanceUntilIdle()
+        assertTrue(h.viewModel.state.value.canSwitch)
+
+        repository.fetchResult = TargetListResult.Unavailable(FailureReason.Timeout)
+        h.viewModel.refresh()
+        advanceUntilIdle()
+
+        val snapshot = (h.viewModel.state.value.targets as TargetsUiState.Ready).snapshot
+        assertTrue(snapshot.fromCache)
+        assertEquals(ConnectionStatus.UNKNOWN, snapshot.targets.single().status)
+        assertFalse(h.viewModel.state.value.canSwitch)
+    }
+
+    @Test
+    fun `切断中のイヤホンではキャッシュだけを不明として表示する`() = runTest {
+        val disconnected = device.copy(connection = ConnectionStatus.DISCONNECTED)
+        val cachedTarget = target(id = "AA:BB:CC:DD:EE:01", status = ConnectionStatus.CONNECTED)
+        val cache = InMemoryTargetCache()
+        cache.write(device.address, TargetSnapshot(listOf(cachedTarget), 500L, true))
+        val repository = FakeTargetRepository(cache = cache)
+        val h = harness(this, devices = listOf(disconnected), repository = repository, cache = cache)
+        h.viewModel.start()
+        advanceUntilIdle()
+        val snapshot = (h.viewModel.state.value.targets as TargetsUiState.Ready).snapshot
+        assertEquals(ConnectionStatus.UNKNOWN, snapshot.targets.single().status)
+        assertEquals(0, repository.fetchCount)
+        assertFalse(h.viewModel.state.value.canSwitch)
+    }
+
+    @Test
+    fun `切断を検出したら表示中の最新一覧も状態不明にする`() = runTest {
+        val connected = target(id = "AA:BB:CC:DD:EE:01", status = ConnectionStatus.CONNECTED)
+        val repository = FakeTargetRepository(fetchResult = TargetListResult.Available(listOf(connected)))
+        val h = harness(this, repository = repository)
+        h.viewModel.start()
+        advanceUntilIdle()
+        h.scanner.result = ScanResult.Found(listOf(device.copy(connection = ConnectionStatus.DISCONNECTED)))
+        h.viewModel.refresh()
+        advanceUntilIdle()
+        val snapshot = (h.viewModel.state.value.targets as TargetsUiState.Ready).snapshot
+        assertTrue(snapshot.fromCache)
+        assertEquals(ConnectionStatus.UNKNOWN, snapshot.targets.single().status)
+        assertFalse(h.viewModel.state.value.canSwitch)
+    }
+
+    @Test
     fun `キャッシュが無く取得に失敗したら理由を表示する`() = runTest {
         val repository = FakeTargetRepository(
             fetchResult = TargetListResult.Unavailable(FailureReason.TargetListUnavailable),

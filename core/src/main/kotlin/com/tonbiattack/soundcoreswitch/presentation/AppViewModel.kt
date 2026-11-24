@@ -6,6 +6,7 @@ import com.tonbiattack.soundcoreswitch.domain.adapter.EarbudsScanner
 import com.tonbiattack.soundcoreswitch.domain.adapter.ScanResult
 import com.tonbiattack.soundcoreswitch.domain.model.ConnectionStatus
 import com.tonbiattack.soundcoreswitch.domain.model.EarbudsDevice
+import com.tonbiattack.soundcoreswitch.domain.model.FailureReason
 import com.tonbiattack.soundcoreswitch.domain.model.MultipointTarget
 import com.tonbiattack.soundcoreswitch.domain.model.ProtectionSettings
 import com.tonbiattack.soundcoreswitch.domain.model.SwitchResult
@@ -211,22 +212,41 @@ class AppViewModel(
                 val availability = bluetooth.check()
                 _state.update { it.copy(bluetooth = availability) }
                 if (availability != BluetoothAvailability.Ready) {
+                    targetsGeneration++
+                    _state.update { state ->
+                        val shown = state.targets as? TargetsUiState.Ready
+                        if (shown == null) state else state.copy(
+                            targets = TargetsUiState.Ready(shown.snapshot.asHistorical()),
+                        )
+                    }
                     return@launch
                 }
 
                 when (val scanned = scanner.scan()) {
-                    is ScanResult.Unavailable -> _state.update {
-                        it.copy(
-                            devices = emptyList(),
-                            targets = TargetsUiState.Unavailable(scanned.reason),
-                        )
+                    is ScanResult.Unavailable -> {
+                        targetsGeneration++
+                        _state.update {
+                            it.copy(
+                                devices = emptyList(),
+                                selectedDevice = null,
+                                targets = TargetsUiState.Unavailable(scanned.reason),
+                            )
+                        }
                     }
                     is ScanResult.Found -> {
                         val devices = scanned.devices
                         // 検出が終わってから選択を解決する。ここが唯一の解決点。
                         val selected = resolveSelection(devices)
+                        if (_state.value.selectedDevice?.address != selected?.address) {
+                            targetsGeneration++
+                        }
                         _state.update {
-                            it.copy(devices = devices, selectedDevice = selected)
+                            val sameDevice = it.selectedDevice?.address == selected?.address
+                            it.copy(
+                                devices = devices,
+                                selectedDevice = selected,
+                                targets = if (sameDevice) it.targets else TargetsUiState.Loading,
+                            )
                         }
                         if (selected != null) {
                             // 自動選択された機種も「前回選択」として記憶する（仕様書 F-07）。
@@ -297,7 +317,20 @@ class AppViewModel(
                 generation == targetsGeneration &&
                 _state.value.selectedDevice?.address == device.address
             ) {
-                _state.update { it.copy(targets = TargetsUiState.Ready(cached)) }
+                _state.update { it.copy(targets = TargetsUiState.Ready(cached.asHistorical())) }
+            }
+
+            if (device.connection == ConnectionStatus.DISCONNECTED) {
+                _state.update { state ->
+                    if (generation != targetsGeneration) return@update state
+                    when (val shown = state.targets) {
+                        is TargetsUiState.Ready -> state.copy(
+                            targets = TargetsUiState.Ready(shown.snapshot.asHistorical()),
+                        )
+                        else -> state.copy(targets = TargetsUiState.Unavailable(FailureReason.EarbudsNotConnected))
+                    }
+                }
+                return@launch
             }
 
             when (val fresh = targetRepository.fetch(device)) {
@@ -309,7 +342,7 @@ class AppViewModel(
                     _state.update {
                         it.copy(
                             targets = if (shown is TargetsUiState.Ready) {
-                                shown
+                                TargetsUiState.Ready(shown.snapshot.asHistorical())
                             } else {
                                 TargetsUiState.Unavailable(fresh.reason)
                             },

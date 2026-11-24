@@ -77,6 +77,30 @@ class DeviceListAssemblerTest {
     }
 
     @Test
+    fun `異なるパケットに同じ端末が含まれたら完全としない`() {
+        val snapshot = DeviceListAssembler.assemble(
+            listOf(
+                chunk(2, 1, listOf(device("AA:AA:AA:AA:AA:01", "端末A", true))),
+                chunk(2, 2, listOf(device("aa:aa:aa:aa:aa:01", "端末A", false))),
+            ),
+        )
+        assertFalse(snapshot.isComplete)
+        assertNull(snapshot.completeOrNull())
+    }
+
+    @Test
+    fun `同名でも識別子が異なれば別端末として扱う`() {
+        val snapshot = DeviceListAssembler.assemble(
+            listOf(chunk(1, 1, listOf(
+                device("AA:AA:AA:AA:AA:01", "PC"),
+                device("AA:AA:AA:AA:AA:02", "PC"),
+            ))),
+        )
+        assertTrue(snapshot.isComplete)
+        assertEquals(2, snapshot.devices.size)
+    }
+
+    @Test
     fun `total が一致しなければ不完全と判定する`() {
         // 別々の応答が混ざった可能性がある。
         val snapshot = DeviceListAssembler.assemble(
