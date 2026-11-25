@@ -257,6 +257,24 @@ class SoundcoreMultipointAdapter(
                 // なるまで待つ。待たずに連続で切り替えると、前の処理が終わっておらず
                 // 「応答がありませんでした」になる（実機で確認）。
                 delay(switchSettleMillis)
+
+                // 落ち着いた後も接続が維持されているかを確認する。
+                //
+                // 実機で「接続直後は接続中になるが、少し経つと切断中に戻る」
+                // 現象が報告されている。接続コマンドの直後だけを見て成功と
+                // 判定すると、この「すぐ切れる」状態を成功として表示してしまう。
+                // 追加で1回読み直し、維持されているものだけを成功とする。
+                val settled = fetchCompleteDevices(device.address, modelCode)
+                val stillConnected = settled
+                    ?.firstOrNull { it.mac.equals(wanted.mac, ignoreCase = true) }
+                    ?.connected
+                logger("落ち着き後の確認: まだ接続中=$stillConnected")
+
+                if (stillConnected == false) {
+                    // 接続は一瞬成立したが維持されなかった。
+                    // 成功として返すと「切り替えたのに戻る」と利用者を混乱させる。
+                    return SwitchResult.Failed(FailureReason.SwitchNotRetained)
+                }
                 SwitchResult.Confirmed(finalTarget.toTarget())
             } else {
                 SwitchResult.Failed(FailureReason.SwitchUnconfirmed)

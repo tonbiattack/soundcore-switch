@@ -38,6 +38,15 @@ sealed interface FailureReason {
     /** 切り替え要求は送れたが、結果を確認できなかった。成功として扱ってはならない。 */
     data object SwitchUnconfirmed : FailureReason
 
+    /**
+     * 接続は一瞬成立したが、その直後に切断された。
+     *
+     * 実機で「接続音は鳴るが、少し経つと未接続に戻る」現象が報告されている。
+     * 接続コマンドの直後だけを見て成功と表示すると、利用者は
+     * 「切り替えたのに戻った」と混乱する。維持されなかったことを明示する。
+     */
+    data object SwitchNotRetained : FailureReason
+
     /** 指定した接続先がイヤホン側に存在しない。 */
     data object TargetNotFound : FailureReason
 
