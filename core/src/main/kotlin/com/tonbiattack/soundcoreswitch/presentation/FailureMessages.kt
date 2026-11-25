@@ -76,6 +76,15 @@ fun FailureReason.toMessage(): FailureMessage = when (this) {
             "接続先一覧を更新してから、もう一度お試しください。",
     )
 
+    // 接続は一瞬成立したが維持されなかった。
+    // 「成功」と表示すると、直後に未接続へ戻る理由が分からず混乱させる。
+    FailureReason.SwitchNotRetained -> FailureMessage(
+        title = "接続が続きませんでした",
+        detail = "接続はいったん成立しましたが、すぐに切断されました。" +
+            "接続先の端末側が接続を受け付けていない可能性があります。" +
+            "接続先の端末で Bluetooth が有効か、省電力設定で切断されていないかを確認してください。",
+    )
+
     // 接続上限に達しているが、安全に切断できる端末が無い。
     // 誤って必要な端末を切るより、切り替えを中止するほうが安全。
     is FailureReason.CannotFreeConnectionSlot -> when (val reason = this.reason) {
