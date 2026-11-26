@@ -30,6 +30,7 @@ Soundcore Switch の設計・調査・検証の記録。
 | [PROTECTION_AND_FAVORITES.md](./PROTECTION_AND_FAVORITES.md) | 接続先の保護とお気に入り（誤切断の防止） | 保護・お気に入りを変えるとき |
 | [FRESHNESS_INVESTIGATION.md](./FRESHNESS_INVESTIGATION.md) | 「最新が反映されない」不具合の調査記録 | 状態更新の経路を変えるとき |
 | [SWITCH_STABILITY.md](./SWITCH_STABILITY.md) | 切り替えが不安定な問題の調査記録 | 待ち時間・再試行を変えるとき |
+| [SWITCH_DROP_INVESTIGATION.md](./SWITCH_DROP_INVESTIGATION.md) | 切り替え直後に切断される現象の実機調査 | 接続が続かない報告を受けたとき |
 | [UI_USABILITY.md](./UI_USABILITY.md) | 画面の使い勝手（イヤホン選択・失敗時の案内） | 画面構成を変えるとき |
 | [ADDING_MODELS.md](./ADDING_MODELS.md) | 対応機種の追加手順と検証チェックリスト | 機種を追加するとき |
 | [RELEASE.md](./RELEASE.md) | 署名・バージョン・配布手順 | リリースするとき |
