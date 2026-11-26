@@ -20,6 +20,7 @@ import com.tonbiattack.soundcoreswitch.domain.repository.TargetRepository
 import com.tonbiattack.soundcoreswitch.domain.usecase.OrderTargetsUseCase
 import com.tonbiattack.soundcoreswitch.domain.usecase.SwitchTargetUseCase
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -57,12 +58,27 @@ class AppViewModel(
      * 画面で保護してもアダプタには伝わらず保護が効かない。
      */
     private val protectionCache: ProtectionCache? = null,
+    /**
+     * 切り替え成功後に、接続が維持されているかを再確認するまでの時間。
+     *
+     * イヤホンは接続先の端末と確立できない場合でも、一覧上はいったん
+     * 「接続中」と報告し、十数秒後に切断中へ戻すことがある（実機で確認）。
+     * 切り替え直後だけを見て成功と表示すると、利用者からは
+     * 「一瞬つながって、すぐ切れた」と見える。
+     *
+     * 少し待ってから再確認し、切れていれば理由を表示する。
+     * 0 以下にすると再確認しない（テストや即応性を優先する場合）。
+     */
+    private val retentionWatchMillis: Long = 15_000,
 ) {
     private val _state = MutableStateFlow(AppUiState())
     val state: StateFlow<AppUiState> = _state.asStateFlow()
 
     private var refreshJob: Job? = null
     private var switchJob: Job? = null
+
+    /** 切り替え後に接続の維持を確認するジョブ。 */
+    private var retentionJob: Job? = null
 
     /** 設定を復元済みか。画面復帰のたびに復元し直さないためのフラグ。 */
     private var preferencesRestored = false
@@ -288,6 +304,46 @@ class AppViewModel(
                 }
             }
             // 成功・失敗にかかわらず、表示中の一覧を実際の状態に合わせ直す。
+            loadTargets(device)
+
+            // 成功と表示した場合でも、接続先の端末と確立できずに
+            // 十数秒で切れることがある。少し待って確認し、
+            // 切れていれば「接続が続かなかった」と伝える。
+            if (result is SwitchResult.Confirmed) {
+                watchRetention(device, result.target)
+            }
+        }
+    }
+
+    /**
+     * 切り替え後に接続が維持されているかを再確認する。
+     *
+     * イヤホンは接続先と確立できなくても、一覧上はいったん接続中と報告し、
+     * しばらくして切断中へ戻すことがある（実機で確認）。
+     * 成功表示のままにすると「一瞬つながって切れた」理由が分からないため、
+     * 待ってから確認し、切れていれば理由を表示する。
+     */
+    private fun watchRetention(device: EarbudsDevice, target: MultipointTarget) {
+        if (retentionWatchMillis <= 0) return
+        retentionJob?.cancel()
+        retentionJob = scope.launch {
+            delay(retentionWatchMillis)
+
+            val stillConnected = switchTarget.isStillConnected(device, target)
+            if (stillConnected != false) return@launch
+
+            // 表示が既に別の結果へ変わっていたら、古い確認結果で上書きしない。
+            val shown = _state.value.switch
+            if (shown !is SwitchUiState.Succeeded) return@launch
+
+            _state.update {
+                it.copy(
+                    switch = SwitchUiState.Failed(
+                        target.displayName,
+                        FailureReason.SwitchNotRetained,
+                    ),
+                )
+            }
             loadTargets(device)
         }
     }
