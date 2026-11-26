@@ -9,6 +9,7 @@ import com.tonbiattack.soundcoreswitch.domain.model.FailureReason
 import com.tonbiattack.soundcoreswitch.domain.model.MultipointTarget
 import com.tonbiattack.soundcoreswitch.domain.model.SwitchResult
 import com.tonbiattack.soundcoreswitch.domain.model.TargetListResult
+import kotlinx.coroutines.CancellationException
 
 /**
  * 接続先の切り替えを実行し、結果を確定する。
@@ -73,6 +74,31 @@ class SwitchTargetUseCase(
                     else -> SwitchResult.Failed(FailureReason.SwitchUnconfirmed)
                 }
             }
+        }
+    }
+
+    /**
+     * 指定した接続先が、いまも接続中かを確認する。
+     *
+     * 切り替え成功後に「本当に維持されているか」を後から確かめるために使う。
+     * イヤホンは接続先と確立できなくても、一覧上はいったん接続中と報告し、
+     * しばらくして切断中へ戻すことがあるため、時間を置いた確認が必要になる。
+     *
+     * @return 接続中なら true、切断中なら false、判断できなければ null。
+     */
+    suspend fun isStillConnected(device: EarbudsDevice, target: MultipointTarget): Boolean? {
+        val adapter = registry.adapterFor(device.model.id) ?: return null
+        return try {
+            when (val reread = adapter.readTargets(device)) {
+                is TargetListResult.Unavailable -> null
+                is TargetListResult.Available ->
+                    reread.targets.firstOrNull { it.id == target.id }?.status ==
+                        ConnectionStatus.CONNECTED
+            }
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            null
         }
     }
 }
