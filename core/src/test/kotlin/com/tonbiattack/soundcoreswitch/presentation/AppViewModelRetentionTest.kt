@@ -134,6 +134,28 @@ class AppViewModelRetentionTest {
     }
 
     @Test
+    fun `数秒で切れた場合は中間の確認で早めに訂正する`() = runTest {
+        // CX のように約5秒で切れる場合、最終確認（15秒）まで待つと
+        // 成功表示のまま誤解させる時間が長くなる。
+        val adapter = DropsAfterAdapter(modelId, connectedReads = 1, item = targetA)
+        val vm = viewModel(this, adapter)
+
+        vm.start()
+        advanceUntilIdle()
+        vm.switchTo(targetA)
+        advanceTimeBy(2_000)
+        runCurrent()
+        assertTrue(vm.state.value.switch is SwitchUiState.Succeeded)
+
+        // 中間確認（全体の半分 = 7.5秒）で訂正されること。
+        advanceTimeBy(6_000)
+        advanceUntilIdle()
+
+        val shown = vm.state.value.switch
+        assertTrue("中間確認で訂正されること（実際: $shown）", shown is SwitchUiState.Failed)
+    }
+
+    @Test
     fun `切り替え後に維持されていれば成功のままにする`() = runTest {
         val adapter = DropsAfterAdapter(modelId, connectedReads = 99, item = targetA)
         val vm = viewModel(this, adapter)

@@ -322,29 +322,41 @@ class AppViewModel(
      * しばらくして切断中へ戻すことがある（実機で確認）。
      * 成功表示のままにすると「一瞬つながって切れた」理由が分からないため、
      * 待ってから確認し、切れていれば理由を表示する。
+     *
+     * **確認は2段階にする。** 実機では数秒で切れる場合と十数秒で切れる場合がある。
+     * 最終確認だけで見ると、数秒で切れたケースの訂正が遅れて
+     * 「成功」のまま誤解させる時間が長くなる。
      */
     private fun watchRetention(device: EarbudsDevice, target: MultipointTarget) {
         if (retentionWatchMillis <= 0) return
         retentionJob?.cancel()
         retentionJob = scope.launch {
-            delay(retentionWatchMillis)
+            // 中間と最終の2回確認する。短命な切断を早めに拾う。
+            val checkpoints = listOf(retentionWatchMillis / 2, retentionWatchMillis)
+            var waited = 0L
+            for (checkpoint in checkpoints) {
+                delay(checkpoint - waited)
+                waited = checkpoint
 
-            val stillConnected = switchTarget.isStillConnected(device, target)
-            if (stillConnected != false) return@launch
+                val stillConnected = switchTarget.isStillConnected(device, target)
+                if (stillConnected == false) {
+                    // 表示が既に別の結果へ変わっていたら、
+                    // 古い確認結果で上書きしない。
+                    val shown = _state.value.switch
+                    if (shown !is SwitchUiState.Succeeded) return@launch
 
-            // 表示が既に別の結果へ変わっていたら、古い確認結果で上書きしない。
-            val shown = _state.value.switch
-            if (shown !is SwitchUiState.Succeeded) return@launch
-
-            _state.update {
-                it.copy(
-                    switch = SwitchUiState.Failed(
-                        target.displayName,
-                        FailureReason.SwitchNotRetained,
-                    ),
-                )
+                    _state.update {
+                        it.copy(
+                            switch = SwitchUiState.Failed(
+                                target.displayName,
+                                FailureReason.SwitchNotRetained,
+                            ),
+                        )
+                    }
+                    loadTargets(device)
+                    return@launch
+                }
             }
-            loadTargets(device)
         }
     }
 
