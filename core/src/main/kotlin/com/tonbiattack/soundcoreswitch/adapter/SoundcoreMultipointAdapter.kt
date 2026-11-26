@@ -74,6 +74,14 @@ class SoundcoreMultipointAdapter(
      */
     private val switchSettleMillis: Long = 1_000,
     /**
+     * 接続が維持されているかを確認するまでの待ち時間。
+     *
+     * 「接続中」と報告された直後に切れる現象があるため、すぐには判定しない。
+     * 実機では接続音の直後に切断されることがあり、1〜2秒では足りない場合がある。
+     * 待ちすぎると操作が遅くなるため、体感と確実さのバランスで決める。
+     */
+    private val retentionSettleMillis: Long = 2_000,
+    /**
      * 操作元（この端末）の接続先 ID（MAC）を返す。
      *
      * 接続上限に達したとき、この端末自身を切断しないために使う。
@@ -150,13 +158,37 @@ class SoundcoreMultipointAdapter(
                 ?: return SwitchResult.Failed(FailureReason.TargetNotFound)
 
             // 既に対象が接続中なら、切断して繋ぎ直す必要はない。
+            //
+            // **ただし「接続中」と報告された直後に切れる場合がある**（実機で確認）。
+            // 一覧の1回の読み取りだけで成功を返すと、直後に切断されても
+            // 「切り替えました」と表示してしまい、利用者は理由が分からない。
+            // 少し待って維持されているかを確かめてから成功とする。
             if (wanted.connected) {
-                return SwitchResult.Confirmed(wanted.toTarget())
+                val kept = retentionAt(device.address, modelCode, wanted.mac)
+                logger("既に接続中: 維持=${kept}")
+                // 維持が確認できた、または読み取り失敗で判断できない場合は
+                // 現状を尊重して成功とする（読み取り失敗で操作を妨げない）。
+                if (kept != false) return SwitchResult.Confirmed(wanted.toTarget())
+            }
+
+            // ここから先は接続コマンドが必要。対象が「接続中と報告されたが
+            // 実際には切れていた」可能性があるため、一覧を取り直して判断する。
+            val list = if (wanted.connected) {
+                fetchCompleteDevices(device.address, modelCode)
+                    ?: return SwitchResult.Failed(FailureReason.TargetListIncomplete)
+            } else {
+                before
+            }
+            val current = list.firstOrNull { it.mac.equals(target.id, ignoreCase = true) }
+                ?: return SwitchResult.Failed(FailureReason.TargetNotFound)
+            if (current.connected) {
+                // 取り直したら接続中に戻っていた。改めて接続する必要はない。
+                return SwitchResult.Confirmed(current.toTarget())
             }
 
             // 接続上限に達しているなら、先に1台を切断する。
             // これをしないと接続コマンドが無視される（実機で確認済み）。
-            val connected = before.filter { it.connected }.map { it.toTarget() }
+            val connected = list.filter { it.connected }.map { it.toTarget() }
             if (connected.size >= maxConnections) {
                 val selection = selectCandidate.select(
                     connected,
@@ -263,14 +295,10 @@ class SoundcoreMultipointAdapter(
                 // 実機で「接続直後は接続中になるが、少し経つと切断中に戻る」
                 // 現象が報告されている。接続コマンドの直後だけを見て成功と
                 // 判定すると、この「すぐ切れる」状態を成功として表示してしまう。
-                // 追加で1回読み直し、維持されているものだけを成功とする。
-                val settled = fetchCompleteDevices(device.address, modelCode)
-                val stillConnected = settled
-                    ?.firstOrNull { it.mac.equals(wanted.mac, ignoreCase = true) }
-                    ?.connected
-                logger("落ち着き後の確認: まだ接続中=$stillConnected")
+                val kept = retentionAt(device.address, modelCode, wanted.mac)
+                logger("落ち着き後の確認: 維持=$kept")
 
-                if (stillConnected == false) {
+                if (kept == false) {
                     // 接続は一瞬成立したが維持されなかった。
                     // 成功として返すと「切り替えたのに戻る」と利用者を混乱させる。
                     return SwitchResult.Failed(FailureReason.SwitchNotRetained)
@@ -363,6 +391,28 @@ class SoundcoreMultipointAdapter(
             val cmd = SoundcoreProtocol.commandOf(frame)
             logger("応答 cmd=%04X %s".format(cmd, LogRedaction.body(SoundcoreProtocol.bodyOf(frame))))
         }
+    }
+
+    /**
+     * 接続が維持されているかを確認する。
+     *
+     * 「接続中」と報告された直後に切れる現象があるため、少し待ってから
+     * 一覧を読み直す。待たずに判定すると、まだ切断が反映されていない
+     * 瞬間を見て「維持されている」と誤認する。
+     *
+     * @return 接続中なら true、切断中または一覧に無ければ false、
+     *   一覧を取得できず判断できなければ null。
+     */
+    private suspend fun retentionAt(
+        mac: String,
+        modelCode: String,
+        targetId: String,
+    ): Boolean? {
+        delay(retentionSettleMillis)
+        val current = fetchCompleteDevices(mac, modelCode) ?: return null
+        val entry = current.firstOrNull { it.mac.equals(targetId, ignoreCase = true) }
+            ?: return false
+        return entry.connected
     }
 
     /**

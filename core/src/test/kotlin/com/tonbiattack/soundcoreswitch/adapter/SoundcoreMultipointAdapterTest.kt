@@ -169,9 +169,10 @@ class SoundcoreMultipointAdapterTest {
 
         assertTrue(result is SwitchResult.Confirmed)
         // 一覧取得のみ。切断・接続コマンドは送らない。
-        assertEquals(
-            listOf(SoundcoreProtocol.Rsp.DUAL_DEVICES),
-            transport.sentCommands,
+        // 接続が維持されているかの確認で一覧を複数回読むことはある。
+        assertTrue(
+            "一覧取得以外のコマンドを送っている: ${transport.sentCommands}",
+            transport.sentCommands.all { it == SoundcoreProtocol.Rsp.DUAL_DEVICES },
         )
     }
 
