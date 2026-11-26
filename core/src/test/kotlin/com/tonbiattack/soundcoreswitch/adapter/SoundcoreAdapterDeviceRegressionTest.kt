@@ -103,6 +103,91 @@ class SoundcoreAdapterDeviceRegressionTest {
     }
 
     @Test
+    fun `既に接続中でも直後に切れるなら接続し直して成功させる`() = runTest {
+        // 一覧では「接続中」なのに、実際にはもう切れかけている場合がある。
+        // 何もせず成功を返すと、利用者から見ると「切り替えたのに戻る」。
+        val transport = SequencedTransport(
+            deviceLists = listOf(
+                // 1回目: B は接続中として報告される
+                listOf(
+                    Triple("AA:AA:AA:AA:AA:01", "端末A", true),
+                    Triple("AA:AA:AA:AA:AA:02", "端末B", true),
+                ),
+                // 2回目: 少し後に確認すると切れている
+                listOf(
+                    Triple("AA:AA:AA:AA:AA:01", "端末A", true),
+                    Triple("AA:AA:AA:AA:AA:02", "端末B", false),
+                ),
+                // 3回目: 取り直しても切断中のまま
+                listOf(
+                    Triple("AA:AA:AA:AA:AA:01", "端末A", true),
+                    Triple("AA:AA:AA:AA:AA:02", "端末B", false),
+                ),
+                // 4回目: 接続し直した直後
+                listOf(
+                    Triple("AA:AA:AA:AA:AA:01", "端末A", true),
+                    Triple("AA:AA:AA:AA:AA:02", "端末B", true),
+                ),
+                // 5回目: 落ち着いた後も維持
+                listOf(
+                    Triple("AA:AA:AA:AA:AA:01", "端末A", true),
+                    Triple("AA:AA:AA:AA:AA:02", "端末B", true),
+                ),
+            ),
+        )
+        val adapter = SoundcoreMultipointAdapter(
+            transport = transport,
+            thisDeviceIdProvider = { "AA:AA:AA:AA:AA:01" },
+        )
+
+        val result = adapter.switchTo(device, target(id = "AA:AA:AA:AA:AA:02"))
+
+        assertTrue("成功として返すこと（実際: $result）", result is SwitchResult.Confirmed)
+        assertTrue(
+            "接続コマンドを送り直していること",
+            connectCommand in transport.sentCommands,
+        )
+        assertTrue(
+            "不要な切断をしていないこと",
+            disconnectCommand !in transport.sentCommands,
+        )
+    }
+
+    private companion object {
+        /** 送信コマンドを照合するための値。 */
+        val connectCommand: Int =
+            ((SoundcoreProtocol.Cmd.CONNECT_DEVICE[0].toInt() and 0xFF) shl 8) or
+                (SoundcoreProtocol.Cmd.CONNECT_DEVICE[1].toInt() and 0xFF)
+        val disconnectCommand: Int =
+            ((SoundcoreProtocol.Cmd.DISCONNECT_DEVICE[0].toInt() and 0xFF) shl 8) or
+                (SoundcoreProtocol.Cmd.DISCONNECT_DEVICE[1].toInt() and 0xFF)
+    }
+
+    @Test
+    fun `既に接続中で維持されていれば接続コマンドを送らない`() = runTest {
+        val transport = SequencedTransport(
+            deviceLists = listOf(
+                listOf(
+                    Triple("AA:AA:AA:AA:AA:01", "端末A", true),
+                    Triple("AA:AA:AA:AA:AA:02", "端末B", true),
+                ),
+            ),
+        )
+        val adapter = SoundcoreMultipointAdapter(
+            transport = transport,
+            thisDeviceIdProvider = { "AA:AA:AA:AA:AA:01" },
+        )
+
+        val result = adapter.switchTo(device, target(id = "AA:AA:AA:AA:AA:02"))
+
+        assertTrue("成功として返すこと（実際: $result）", result is SwitchResult.Confirmed)
+        assertTrue(
+            "接続コマンドを送っていないこと",
+            connectCommand !in transport.sentCommands,
+        )
+    }
+
+    @Test
     fun `接続が一瞬成立しても維持されなければ成功にしない`() = runTest {
         // 実機で「接続音は鳴るが、少し経つと未接続に戻る」現象が報告されている。
         // 接続直後だけを見て成功と表示すると、利用者は理由が分からない。
